@@ -761,8 +761,24 @@ def test_gitignore_files_outside_a_work_tree_are_plain_files(tmp_path: Path) -> 
     (tmp_path / ".gitignore").write_text("ignored_module.py\n")
     _write_source_tree(tmp_path, ["kept.py", "ignored_module.py"])
 
-    units = CodeExtractor(tmp_path, include_private=True).extract_all()
+    extractor = CodeExtractor(tmp_path, include_private=True)
+    units = extractor.extract_all()
     assert sorted(unit.name for unit in units) == ["ignored_module_fn", "kept_fn"]
+    assert extractor.diagnostics == []
+
+
+@requires_git
+def test_git_failure_inside_a_checkout_is_a_diagnostic(tmp_path: Path, caplog) -> None:
+    """Ignore rules lapsing because git errors inside a repository are reported, not silent."""
+    root = _git_work_tree(tmp_path)
+    (root / ".git" / "index").write_bytes(b"not an index")
+
+    extractor = CodeExtractor(root, include_private=True)
+    with caplog.at_level("WARNING", logger="codedupes.extractor"):
+        units = extractor.extract_all()
+    assert "ignored_module_fn" in {unit.name for unit in units}
+    assert [diagnostic.code for diagnostic in extractor.diagnostics] == ["gitignore-unavailable"]
+    assert "nothing is skipped as git-ignored" in caplog.text
 
 
 @requires_git

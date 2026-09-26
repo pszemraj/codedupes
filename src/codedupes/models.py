@@ -15,8 +15,9 @@ if TYPE_CHECKING:
     from codedupes.semantic import EmbeddingRunStats
 
 # Extraction diagnostic codes that leave a run's scope incomplete rather than
-# merely advisory (``c-header-policy``, ``semantic-context-overflow``, and
-# ``suppression-syntax`` are notices, not scope loss).
+# merely advisory (``c-header-policy``, ``gitignore-unavailable``,
+# ``semantic-context-overflow``, and ``suppression-syntax`` are notices, not
+# scope loss).
 INCOMPLETE_EXTRACTION_CODES: frozenset[str] = frozenset(
     {"read-error", "invalid-utf8", "partial-parse", "unit-parse-error", "walk-error"}
 )

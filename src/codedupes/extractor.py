@@ -36,7 +36,16 @@ DEFAULT_EXCLUDE_PATTERNS = [
 ]
 
 
-def git_ignored_paths(root: Path) -> frozenset[Path]:
+def _inside_git_checkout(root: Path) -> bool:
+    """Report whether a ``.git`` entry sits at or above a directory.
+
+    :param root: Resolved scan root.
+    :return: ``True`` when ``root`` or an ancestor holds ``.git``.
+    """
+    return any((directory / ".git").exists() for directory in (root, *root.parents))
+
+
+def git_ignored_paths(root: Path) -> tuple[frozenset[Path], str | None]:
     """Return the root-relative paths git ignores beneath a scan root.
 
     Git is the authority on its own ignore rules (nested ``.gitignore`` files,
@@ -46,9 +55,13 @@ def git_ignored_paths(root: Path) -> frozenset[Path]:
     is one entry, which lets the walk prune it without listing its contents.
 
     :param root: Resolved scan root.
-    :return: Ignored paths relative to ``root``; empty when ``root`` is not
-        inside a git work tree, ``git`` is unavailable, or ``root`` itself is
-        ignored (an explicitly selected ignored directory is scanned in full).
+    :return: Ignored paths relative to ``root`` and a failure description.
+        The paths are empty when ``root`` is not inside a git work tree,
+        ``git`` is unavailable, or ``root`` itself is ignored (an explicitly
+        selected ignored directory is scanned in full). The description is set
+        only when ``git`` failed inside a checkout (a repository refused for
+        dubious ownership, a corrupt index), so ignore rules silently lapsing
+        there can be reported.
     """
     command = [
         "git",
@@ -67,19 +80,21 @@ def git_ignored_paths(root: Path) -> frozenset[Path]:
         )
     except OSError as error:
         logger.debug(f"git is unavailable; .gitignore is not applied to {root}: {error}")
-        return frozenset()
+        return frozenset(), None
     if completed.returncode != 0:
-        detail = completed.stderr.decode(errors="replace").strip().splitlines()
-        logger.debug(
-            f".gitignore is not applied to {root}: {detail[0] if detail else 'git ls-files failed'}"
-        )
-        return frozenset()
+        lines = completed.stderr.decode(errors="replace").strip().splitlines()
+        detail = lines[0] if lines else f"git ls-files exited {completed.returncode}"
+        if not _inside_git_checkout(root):
+            logger.debug(f".gitignore is not applied to {root}: {detail}")
+            return frozenset(), None
+        return frozenset(), detail
     entries = [os.fsdecode(entry) for entry in completed.stdout.split(b"\0") if entry]
     # Git can emit "./" for the selected root alongside ignored child files;
     # the marker itself is not a path to prune.
-    return frozenset(
+    ignored = frozenset(
         Path(entry.rstrip("/")) for entry in entries if entry.rstrip("/") not in {"", "."}
     )
+    return ignored, None
 
 
 def git_work_tree(path: Path) -> Path | None:
@@ -211,7 +226,9 @@ class CodeExtractor:
         if not self.respect_gitignore:
             return False
         if self._ignored_paths is None:
-            self._ignored_paths = git_ignored_paths(self.root)
+            self._ignored_paths, failure = git_ignored_paths(self.root)
+            if failure is not None:
+                self._report_gitignore_failure(failure)
         if not self._ignored_paths:
             return False
         rel = path.relative_to(self.root)
@@ -497,6 +514,30 @@ class CodeExtractor:
                 message=message,
                 severity="warning",
                 code=code,
+            )
+        )
+
+    def _report_gitignore_failure(self, detail: str) -> None:
+        """Record that git could not list ignored paths inside a checkout.
+
+        Nothing is skipped as git-ignored for the run, so the report says why
+        paths a working ``git`` would have pruned were scanned.
+
+        :param detail: First line of git's error output.
+        :return: ``None``.
+        """
+        message = (
+            f"git could not list ignored paths under {self.root} ({detail}); "
+            "nothing is skipped as git-ignored"
+        )
+        logger.warning(message)
+        self.diagnostics.append(
+            ExtractionDiagnostic(
+                file_path=self.root,
+                language="unknown",
+                message=message,
+                severity="warning",
+                code="gitignore-unavailable",
             )
         )
 
