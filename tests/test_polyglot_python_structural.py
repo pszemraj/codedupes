@@ -757,6 +757,42 @@ def test_python_directive_attachment(tmp_path: Path) -> None:
     )
     assert blank_line_breaks["blank_line_breaks.f"].suppressions == set()
 
+    # A comment inside a decorator's arguments or a default value's literal
+    # annotates that expression, not the unit, even on a header row; one
+    # trailing a row of a multi-row signature still belongs to the unit.
+    expression_comments = python_units(
+        tmp_path,
+        """
+        @mark.parametrize(
+            "x",
+            [1,
+             # codedupes: ignore
+             2],
+        )
+        def decorated(x):
+            return x
+
+        def defaulted(opts={
+            "a": 1,
+            # codedupes: ignore[bogus]
+            "b": 2,
+        }):
+            return opts
+
+        def signature(
+            a,  # codedupes: ignore[unused]
+            b,
+        ):
+            return a
+        """,
+        filename="expression_comments.py",
+    )
+    assert {name: unit.suppressions for name, unit in expression_comments.items()} == {
+        "expression_comments.decorated": set(),
+        "expression_comments.defaulted": set(),
+        "expression_comments.signature": {"unused"},
+    }
+
     # A UTF-8 BOM before a first-row directive is not code sharing its row.
     bom_first_row = python_units(
         tmp_path,

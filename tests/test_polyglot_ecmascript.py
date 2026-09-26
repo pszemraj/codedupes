@@ -664,6 +664,21 @@ def test_javascript_suppression_directive_attachment(tmp_path: Path) -> None:
             {"A": set(), "A.a": {"unused"}, "A.b": set()},
             id="ts-trailing-after-class-field-terminator",
         ),
+        pytest.param(
+            "ts_namespace.ts",
+            "// codedupes: ignore[unused]\nnamespace Outer {\n"
+            "  namespace Inner { export function f() { return 1; } }\n"
+            "  export function sibling() { return 2; }\n}\nexport function free() { return 3; }\n",
+            {"Outer.Inner.f": {"unused"}, "Outer.sibling": {"unused"}, "free": set()},
+            id="ts-namespace-directive-marks-its-members",
+        ),
+        pytest.param(
+            "ts_decorator_argument.ts",
+            '@Component({\n  selector: "app",\n  // codedupes: ignore\n  template: "<div></div>",\n})\n'
+            "class Widget { method() { return 1; } }\n",
+            {"Widget": set(), "Widget.method": set()},
+            id="ts-comment-inside-decorator-arguments-is-not-a-directive",
+        ),
     ],
 )
 def test_ecmascript_suppression_directive_positive_controls(

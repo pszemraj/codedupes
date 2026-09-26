@@ -801,6 +801,32 @@ def _comments_on_rows(node: Any, rows: frozenset[int]) -> list[Any]:
     ]
 
 
+# Bracketed expressions a header can contain (decorator or annotation call
+# arguments, a default value's literal): a comment inside one annotates that
+# expression, not the unit. Parameter lists are not among them, so a comment
+# trailing a row of a multi-row signature still belongs to the unit.
+_EXPRESSION_GROUP_TYPES = frozenset(
+    {
+        "argument_list",  # Python, C
+        "arguments",  # JavaScript/TypeScript, Rust
+        "dictionary",
+        "list",
+        "set",
+        "tuple",
+        "generator_expression",
+        "list_comprehension",
+        "dictionary_comprehension",
+        "set_comprehension",
+        "object",  # JavaScript/TypeScript
+        "array",
+        "array_expression",  # Rust
+        "tuple_expression",
+        "field_initializer_list",
+        "initializer_list",  # C
+    }
+)
+
+
 def _owns_comment(
     comment: Any, anchor: Any, spec: UnitSpec, nested_scope_types: frozenset[str]
 ) -> bool:
@@ -813,7 +839,9 @@ def _owns_comment(
     own node type (``arrow_function``, ``class``) can itself be a nested-scope
     type. A node whose ``type`` is in ``nested_scope_types`` reached first
     means a nested function, method, class, or callback -- including an
-    anonymous callback sitting in a parameter default -- owns it instead.
+    anonymous callback sitting in a parameter default -- owns it instead, and
+    one in ``_EXPRESSION_GROUP_TYPES`` means the comment annotates a decorator
+    argument or a default value's literal rather than the unit.
 
     :param comment: Candidate comment, a descendant of ``anchor``.
     :param anchor: Statement anchor from :func:`_statement_anchor`.
@@ -829,7 +857,8 @@ def _owns_comment(
             or _same_node(current, spec.source_node)
         ):
             return True
-        if getattr(current, "type", "") in nested_scope_types:
+        node_type = getattr(current, "type", "")
+        if node_type in nested_scope_types or node_type in _EXPRESSION_GROUP_TYPES:
             return False
         current = getattr(current, "parent", None)
     return True
@@ -973,9 +1002,10 @@ class TreeSitterBackend:
     statement_types: frozenset[str] = frozenset()
     nested_scope_types: frozenset[str] = frozenset()
     class_member_types: frozenset[str] = frozenset()
-    # Blocks that hold units without being one (Rust ``impl``/``trait``/``mod``):
+    # Blocks that hold units without being one (Rust ``impl``/``trait``/``mod``,
+    # a TypeScript ``namespace``), by node type with a label for diagnostics:
     # a directive attached to one applies to every unit inside it.
-    directive_container_types: frozenset[str] = frozenset()
+    directive_containers: ClassVar[dict[str, str]] = {}
     builtins: frozenset[str] = frozenset()
     hash_policy: ClassVar[HashPolicy] = DEFAULT_HASH_POLICY
 
@@ -1293,13 +1323,13 @@ class TreeSitterBackend:
         for spec in deduped.values():
             ancestor = getattr(spec.node, "parent", None)
             while ancestor is not None:
-                if getattr(ancestor, "type", "") in self.directive_container_types:
+                if getattr(ancestor, "type", "") in self.directive_containers:
                     span = (int(ancestor.start_byte), int(ancestor.end_byte))
                     containers.setdefault(span, ancestor)
                 ancestor = getattr(ancestor, "parent", None)
         for span, container in sorted(containers.items(), key=lambda item: item[0]):
             row, _ = _point_parts(getattr(container, "start_point", (0, 0)))
-            owner = f"the {str(container.type).removesuffix('_item')} block at line {row + 1}"
+            owner = f"the {self.directive_containers[container.type]} at line {row + 1}"
             scoped_suppressions.append(
                 (
                     span,
@@ -1971,7 +2001,11 @@ class RustBackend(TreeSitterBackend):
     # kinds as well would double-count the same statement.
     statement_types = frozenset({"let_declaration", "expression_statement"})
     nested_scope_types = frozenset({"function_item", "closure_expression"})
-    directive_container_types = frozenset({"impl_item", "trait_item", "mod_item"})
+    directive_containers: ClassVar[dict[str, str]] = {
+        "impl_item": "impl block",
+        "trait_item": "trait block",
+        "mod_item": "mod block",
+    }
     builtins = frozenset(
         {
             "self",
@@ -2296,6 +2330,7 @@ class ECMAScriptBackend(TreeSitterBackend):
     class_expressions = frozenset({"class"})
     method_types = frozenset({"method_definition"})
     field_types = frozenset({"field_definition", "public_field_definition"})
+    directive_containers: ClassVar[dict[str, str]] = {"internal_module": "namespace"}
     transparent_types = frozenset(
         {
             "parenthesized_expression",
