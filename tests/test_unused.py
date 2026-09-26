@@ -1571,8 +1571,18 @@ def test_default_excluded_symlink_directory_does_not_import_external_references(
 
 @pytest.mark.parametrize("target_name", ["source.py", "test_alias.py", None])
 def test_reference_graph_counts_in_tree_file_symlink_once(tmp_path: Path, target_name: str | None):
+    """A default-excluded alias of a source file is parsed once, as that file.
+
+    Parsed a second time, the alias's ``self._step()`` would credit the real
+    ``_step`` from a definition with no unit of its own; the bare ``_loop()``
+    call resolves inside the alias module and never leaked.
+    """
     source = tmp_path / "source.py"
-    source.write_text("def _loop():\n    return _loop()\n", encoding="utf-8")
+    source.write_text(
+        "def _loop():\n    return _loop()\n\n\n"
+        "class _Worker:\n    def _step(self):\n        return self._step()\n",
+        encoding="utf-8",
+    )
     alias = tmp_path / "test_alias.py"
     alias.symlink_to(source)
     target = tmp_path / target_name if target_name is not None else tmp_path
@@ -1581,8 +1591,13 @@ def test_reference_graph_counts_in_tree_file_symlink_once(tmp_path: Path, target
         AnalyzerConfig(run_traditional=False, run_semantic=False, strict_unused=True)
     ).analyze(target)
 
-    assert [unit.name for unit in result.potentially_unused] == ["_loop"]
-    assert result.potentially_unused[0].references == set()
+    assert sorted(unit.qualified_name for unit in result.potentially_unused) == [
+        "source._Worker",
+        "source._Worker._step",
+        "source._loop",
+    ]
+    assert all(unit.references == set() for unit in result.potentially_unused)
+    assert result.run.unused.files == 1
 
 
 def test_non_utf8_module_still_contributes_references(tmp_path: Path) -> None:

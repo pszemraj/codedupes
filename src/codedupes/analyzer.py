@@ -90,6 +90,30 @@ SEMANTIC_UNIT_TYPE_CHOICES: tuple[str, ...] = tuple(SEMANTIC_UNIT_TYPE_TO_ENUM)
 DEFAULT_TINY_UNIT_STATEMENT_CUTOFF = 3
 
 
+def _unique_sources(paths: list[Path]) -> list[Path]:
+    """Keep the first spelling of each source file, dropping later aliases.
+
+    An in-tree symlink (``test_alias.py -> source.py``) is the same module as
+    its target. Parsing it again for the unused reference graph would credit
+    the target's units from definitions that have none of their own, hiding a
+    method that only calls itself through ``self``.
+
+    :param paths: Python files in priority order, extracted files first.
+    :return: One path per resolved file, in the original order.
+    """
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for path in paths:
+        try:
+            identity = path.resolve()
+        except (OSError, RuntimeError):
+            identity = path
+        if identity not in seen:
+            seen.add(identity)
+            unique.append(path)
+    return unique
+
+
 def _reject_mode_gated_fields(
     mode_enabled: bool,
     required_flag: str,
@@ -929,9 +953,9 @@ class CodeAnalyzer:
                     languages=self.config.languages,
                     respect_gitignore=self.config.respect_gitignore,
                 )
-                for reference_file in reference_extractor.reference_files():
-                    if reference_file not in self._python_files:
-                        self._python_files.append(reference_file)
+                self._python_files = _unique_sources(
+                    [*self._python_files, *reference_extractor.reference_files()]
+                )
                 self._extraction_diagnostics.extend(reference_extractor.diagnostics)
         else:
             extractor = CodeExtractor(
@@ -950,10 +974,9 @@ class CodeAnalyzer:
             )
             self._effective_excludes = tuple(extractor.exclude_patterns)
             self._extraction_root = path
-            self._python_files = [
-                *extractor.extracted_files.get("python", []),
-                *extractor.reference_only_files,
-            ]
+            self._python_files = _unique_sources(
+                [*extractor.extracted_files.get("python", []), *extractor.reference_only_files]
+            )
 
         logger.info(f"Extracted {len(units)} code units")
         return units
