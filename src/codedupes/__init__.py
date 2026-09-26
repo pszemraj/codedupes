@@ -48,6 +48,7 @@ from .report import (
     search_result_to_json,
     select_findings,
     to_json_text,
+    unused_sort_key,
 )
 
 try:
@@ -89,4 +90,5 @@ __all__ = [
     "search_result_to_json",
     "select_findings",
     "to_json_text",
+    "unused_sort_key",
 ]
