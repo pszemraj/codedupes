@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import difflib
 import os
-import textwrap
 from collections.abc import Iterable
 from typing import cast
 
@@ -427,19 +426,22 @@ def _print_source_panels(*units: CodeUnit, source_lines: int | None) -> None:
 
 
 def _diff_lines(unit: CodeUnit) -> list[str]:
-    """Split a unit's source into diff lines, dedenting its body only.
+    """Split a unit's source into diff lines relative to the unit's own column.
 
-    A method's first line already carries the signature at its own
-    indentation, but ``textwrap.dedent`` on the remaining lines keeps a
-    function-vs-method pair from diffing on indentation alone.
+    The source starts at the unit's column while later lines keep the file's
+    full indentation, so each later line loses up to ``start_column`` leading
+    whitespace characters: the body stays indented under its signature, and a
+    function-vs-method pair does not diff on nesting depth alone.
 
     :param unit: Unit whose source is being diffed.
-    :return: Source lines, with every line after the first dedented as a block.
+    :return: Source lines re-based to the unit's first column.
     """
-    lines = unit.source.split("\n")
-    if len(lines) <= 1:
-        return lines
-    return [lines[0], *textwrap.dedent("\n".join(lines[1:])).split("\n")]
+    first, *rest = unit.source.split("\n")
+    rebased = [first]
+    for line in rest:
+        indent = len(line) - len(line.lstrip(" \t"))
+        rebased.append(line[min(unit.start_column, indent) :])
+    return rebased
 
 
 def _print_diff_panel(unit_a: CodeUnit, unit_b: CodeUnit, *, source_lines: int | None) -> None:

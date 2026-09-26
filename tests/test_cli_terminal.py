@@ -261,7 +261,10 @@ def test_cli_source_lines_bounds_source_panels(tmp_path: Path) -> None:
 
 
 def test_cli_show_diff_prints_the_differing_operator(tmp_path: Path) -> None:
-    source = "def add(a, b):\n    return a + b\n\n\ndef add_alt(a, b):\n    return a - b\n"
+    source = (
+        "def add(a, b):\n    return a + b\n\n\n"
+        "class Ops:\n    def add(self, a, b):\n        return a - b\n"
+    )
     (tmp_path / "sample.py").write_text(source, encoding="utf-8")
 
     result = CliRunner().invoke(
@@ -279,9 +282,10 @@ def test_cli_show_diff_prints_the_differing_operator(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 1, result.output
-    # A single-statement body dedents flush left, so only the operator differs.
-    assert "-return a + b" in result.stdout
-    assert "+return a - b" in result.stdout
+    # The method's body loses only its class nesting, so it keeps its indent
+    # under the signature and only the operator differs.
+    assert "-    return a + b" in result.stdout
+    assert "+    return a - b" in result.stdout
     assert "sample.add" in result.stdout
     assert "sample.py:1" in result.stdout
 
@@ -317,11 +321,11 @@ def test_cli_show_diff_renders_source_changes_in_exact_families(
     assert result.exit_code == 1, result.output
     # structural_hash family (renamed local): diffed against the first member.
     assert "file3.calc vs file4.calc" in result.stdout
-    assert "-result = value + 1" in result.stdout
-    assert "+total = value + 1" in result.stdout
+    assert "-    result = value + 1" in result.stdout
+    assert "+    total = value + 1" in result.stdout
     # Token-equal copies can differ in comments, while source-identical copies have no diff.
     assert "file1.helper vs file2.helper" in result.stdout
-    assert "+# A different comment." in result.stdout
+    assert "+    # A different comment." in result.stdout
     assert "file1.helper vs file5.helper" not in result.stdout
 
 
@@ -352,8 +356,8 @@ def test_cli_show_diff_respects_source_lines_budget(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 1, result.output
-    assert "-result = value + 1" in result.stdout
-    assert "+total = value + 1" not in result.stdout
+    assert "-    result = value + 1" in result.stdout
+    assert "+    total = value + 1" not in result.stdout
     assert "more diff line" in result.stdout
 
 
