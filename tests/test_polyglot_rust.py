@@ -563,3 +563,44 @@ def test_rust_suppression_directive_attachment(tmp_path: Path) -> None:
         "m": {"duplicates"},
         "n": set(),
     }
+
+    # impl, trait, and mod blocks are not units, but a directive attached to
+    # one applies to every unit inside it.
+    blocks = extract(
+        tmp_path,
+        "blocks.rs",
+        """
+        struct S;
+        // codedupes: ignore
+        impl S {
+            fn a(&self) -> i32 { 1 }
+            fn b(&self) -> i32 { 2 }
+        }
+        impl Clone for S { // codedupes: ignore[unused]
+            fn clone(&self) -> S { S }
+        }
+        trait T { fn t(&self) -> i32 { 3 } } // codedupes: ignore[duplicates]
+        mod m {
+            pub fn inner() -> i32 { 4 }
+        }
+        fn free() -> i32 { 5 }
+        """,
+    )
+    assert {unit.qualified_name.split(".", 1)[1]: unit.suppressions for unit in blocks} == {
+        "S.a": {"unused", "duplicates"},
+        "S.b": {"unused", "duplicates"},
+        "S.Clone.clone": {"unused"},
+        "T.t": {"duplicates"},
+        "m.inner": set(),
+        "free": set(),
+    }
+
+    path = tmp_path / "bad_block.rs"
+    path.write_text(
+        "struct S;\n// codedupes: ignore[bogus]\nimpl S {\n    fn a(&self) {}\n    fn b(&self) {}\n}\n",
+        encoding="utf-8",
+    )
+    extractor = CodeExtractor(tmp_path, include_private=True, languages=("rust",))
+    list(extractor.extract_from_file(path))
+    assert [(d.code, d.lineno) for d in extractor.diagnostics] == [("suppression-syntax", 2)]
+    assert "impl block at line 3" in extractor.diagnostics[0].message

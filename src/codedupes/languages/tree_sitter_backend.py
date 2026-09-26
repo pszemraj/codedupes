@@ -212,6 +212,16 @@ class UnitSpec:
     is_exported: bool
 
 
+def _span_contains(outer: tuple[int, int], inner: tuple[int, int]) -> bool:
+    """Report whether one byte span encloses another (or equals it).
+
+    :param outer: Candidate enclosing ``(start, end)`` byte span.
+    :param inner: Candidate enclosed ``(start, end)`` byte span.
+    :return: ``True`` when ``inner`` lies within ``outer``.
+    """
+    return outer[0] <= inner[0] and inner[1] <= outer[1]
+
+
 def _spec_span(spec: UnitSpec) -> tuple[int, int]:
     """Return the byte range covering both a spec's unit node and its source node.
 
@@ -963,6 +973,9 @@ class TreeSitterBackend:
     statement_types: frozenset[str] = frozenset()
     nested_scope_types: frozenset[str] = frozenset()
     class_member_types: frozenset[str] = frozenset()
+    # Blocks that hold units without being one (Rust ``impl``/``trait``/``mod``):
+    # a directive attached to one applies to every unit inside it.
+    directive_container_types: frozenset[str] = frozenset()
     builtins: frozenset[str] = frozenset()
     hash_policy: ClassVar[HashPolicy] = DEFAULT_HASH_POLICY
 
@@ -1107,6 +1120,82 @@ class TreeSitterBackend:
             *_following_comments(anchor, rows, spec, source, self.nested_scope_types),
         ]
 
+    def _container_comments(self, container: Any, source: bytes) -> list[Any]:
+        """Collect the comments that can carry a directive for a non-unit container block.
+
+        The block is inspected as if it were a unit, so it attaches comments the
+        same ways: a leading block above it, a comment trailing its opening row,
+        or one ending a one-line block.
+
+        :param container: Container node (a Rust ``impl_item``, for example).
+        :param source: Full file source bytes.
+        :return: Attached comments; empty for a block without a body (``mod m;``).
+        """
+        body = container.child_by_field_name("body")
+        if body is None:
+            return []
+        block = UnitSpec(
+            node=container,
+            source_node=container,
+            body=body,
+            name="",
+            qualified_name="",
+            unit_type=CodeUnitType.CLASS,
+            native_kind=str(getattr(container, "type", "")),
+            is_public=False,
+            is_exported=False,
+        )
+        return self._attached_comments(block, source)
+
+    def _directive_kinds(
+        self,
+        file_path: Path,
+        comments: list[Any],
+        owner: str,
+        source: bytes,
+        diagnostics: list[ExtractionDiagnostic],
+    ) -> frozenset[str]:
+        """Parse the directives in a unit's or block's attached comments.
+
+        :param file_path: File being extracted, for diagnostics.
+        :param comments: Attached comment nodes.
+        :param owner: What the comments are attached to, for diagnostic messages.
+        :param source: Full file source bytes.
+        :param diagnostics: Receives one ``suppression-syntax`` diagnostic per
+            malformed directive or unknown kind list.
+        :return: Recognized suppression kinds across the comments.
+        """
+        known: set[str] = set()
+        for comment in comments:
+            text = _node_text(source, comment)
+            try:
+                comment_known, comment_unknown = parse_suppressions(text)
+            except ValueError as exc:
+                diagnostics.append(
+                    self._diagnostic_for_node(
+                        file_path,
+                        comment,
+                        f"Invalid suppression directive on {owner}: {exc}.",
+                        code="suppression-syntax",
+                        row=_directive_row(comment, text),
+                    )
+                )
+                continue
+            known |= comment_known
+            if comment_unknown:
+                diagnostics.append(
+                    self._diagnostic_for_node(
+                        file_path,
+                        comment,
+                        f"Unknown suppression kind(s) on {owner}: "
+                        f"{', '.join(sorted(comment_unknown))}; known kinds are "
+                        f"{', '.join(sorted(SUPPRESSION_KINDS))}.",
+                        code="suppression-syntax",
+                        row=_directive_row(comment, text),
+                    )
+                )
+        return frozenset(known)
+
     def extract_file(self, file_path: Path) -> BackendResult:
         """Parse one file and build its code units and parse diagnostics.
 
@@ -1184,52 +1273,51 @@ class TreeSitterBackend:
         ]
 
         # A directive applies to its own unit and to every unit nested inside
-        # it (the same containment test as private_container_spans), so a
-        # container's own suppressions are collected first, then propagated.
-        own_suppressions: dict[int, frozenset[str]] = {}
+        # it (the same containment test as private_container_spans), so each
+        # unit's and container block's own suppressions are collected first,
+        # then propagated by span.
+        scoped_suppressions: list[tuple[tuple[int, int], frozenset[str]]] = [
+            (
+                _spec_span(spec),
+                self._directive_kinds(
+                    file_path,
+                    self._attached_comments(spec, source),
+                    spec.qualified_name,
+                    source,
+                    diagnostics,
+                ),
+            )
+            for spec in deduped.values()
+        ]
+        containers: dict[tuple[int, int], Any] = {}
         for spec in deduped.values():
-            known: set[str] = set()
-            for comment in self._attached_comments(spec, source):
-                text = _node_text(source, comment)
-                try:
-                    comment_known, comment_unknown = parse_suppressions(text)
-                except ValueError as exc:
-                    diagnostics.append(
-                        self._diagnostic_for_node(
-                            file_path,
-                            comment,
-                            f"Invalid suppression directive on {spec.qualified_name}: {exc}.",
-                            code="suppression-syntax",
-                            row=_directive_row(comment, text),
-                        )
-                    )
-                    continue
-                known |= comment_known
-                if comment_unknown:
-                    diagnostics.append(
-                        self._diagnostic_for_node(
-                            file_path,
-                            comment,
-                            f"Unknown suppression kind(s) on {spec.qualified_name}: "
-                            f"{', '.join(sorted(comment_unknown))}; known kinds are "
-                            f"{', '.join(sorted(SUPPRESSION_KINDS))}.",
-                            code="suppression-syntax",
-                            row=_directive_row(comment, text),
-                        )
-                    )
-            own_suppressions[id(spec)] = frozenset(known)
-        spec_spans = {id(spec): _spec_span(spec) for spec in deduped.values()}
+            ancestor = getattr(spec.node, "parent", None)
+            while ancestor is not None:
+                if getattr(ancestor, "type", "") in self.directive_container_types:
+                    span = (int(ancestor.start_byte), int(ancestor.end_byte))
+                    containers.setdefault(span, ancestor)
+                ancestor = getattr(ancestor, "parent", None)
+        for span, container in sorted(containers.items(), key=lambda item: item[0]):
+            row, _ = _point_parts(getattr(container, "start_point", (0, 0)))
+            owner = f"the {str(container.type).removesuffix('_item')} block at line {row + 1}"
+            scoped_suppressions.append(
+                (
+                    span,
+                    self._directive_kinds(
+                        file_path,
+                        self._container_comments(container, source),
+                        owner,
+                        source,
+                        diagnostics,
+                    ),
+                )
+            )
         suppressions: dict[int, frozenset[str]] = {}
         for spec in deduped.values():
-            span = spec_spans[id(spec)]
-            combined = set(own_suppressions[id(spec)])
-            for other in deduped.values():
-                if other is spec:
-                    continue
-                other_span = spec_spans[id(other)]
-                if other_span[0] <= span[0] and span[1] <= other_span[1]:
-                    combined |= own_suppressions[id(other)]
-            suppressions[id(spec)] = frozenset(combined)
+            span = _spec_span(spec)
+            suppressions[id(spec)] = frozenset().union(
+                *(kinds for scope, kinds in scoped_suppressions if _span_contains(scope, span))
+            )
 
         units: list[CodeUnit] = []
         for spec in sorted(
@@ -1242,10 +1330,7 @@ class TreeSitterBackend:
         ):
             if not self._include_spec(spec):
                 continue
-            spec_start, spec_end = _spec_span(spec)
-            if any(
-                start <= spec_start and spec_end <= end for start, end in private_container_spans
-            ):
+            if any(_span_contains(span, _spec_span(spec)) for span in private_container_spans):
                 continue
             if _contains_error(spec.node):
                 diagnostics.append(
@@ -1886,6 +1971,7 @@ class RustBackend(TreeSitterBackend):
     # kinds as well would double-count the same statement.
     statement_types = frozenset({"let_declaration", "expression_statement"})
     nested_scope_types = frozenset({"function_item", "closure_expression"})
+    directive_container_types = frozenset({"impl_item", "trait_item", "mod_item"})
     builtins = frozenset(
         {
             "self",
