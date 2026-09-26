@@ -336,7 +336,7 @@ class CodeExtractor:
             path, check_ancestors=False, matchers=self._user_exclude_matchers
         )
 
-    def _collect_reference_files(self, directory: Path) -> list[Path]:
+    def _collect_reference_files(self, directory: Path, *, recursive: bool = True) -> list[Path]:
         """Walk a directory for Python files to parse for references only.
 
         Prunes with the user's own patterns alone, so default test-file shapes do
@@ -347,6 +347,8 @@ class CodeExtractor:
 
         :param directory: A directory the main walk pruned for a default test
             shape, or the root.
+        :param recursive: Descend into subdirectories; ``False`` reads only the
+            files directly in ``directory``.
         :return: Python file paths under ``directory`` not otherwise excluded.
         """
         # os.walk does not descend into symlink directories it encounters, but
@@ -365,7 +367,7 @@ class CodeExtractor:
                     subdirectory, check_ancestors=False, matchers=self._user_exclude_matchers
                 ):
                     included_dirs.append(name)
-            dirnames[:] = included_dirs
+            dirnames[:] = included_dirs if recursive else []
 
             for filename in sorted(filenames):
                 if not filename.endswith(".py"):
@@ -378,17 +380,19 @@ class CodeExtractor:
                 collected.append(source_file)
         return collected
 
-    def reference_files(self) -> list[Path]:
+    def reference_files(self, *, recursive: bool = True) -> list[Path]:
         """Return Python files under the root for unused-code reference parsing only.
 
-        Walks the whole tree with the user's own exclusion patterns (git ignore
-        rules and artifact directories still apply), so test files the default
-        shapes would otherwise drop from duplicate detection are included. Used
-        by a single-file scan target to seed the reference graph project-wide.
+        Walks the tree with the user's own exclusion patterns (git ignore rules
+        and artifact directories still apply), so test files the default shapes
+        would otherwise drop from duplicate detection are included. Used by a
+        single-file scan target to seed the reference graph project-wide.
 
-        :return: Every Python file under the root the user's own patterns admit.
+        :param recursive: Walk the whole tree; ``False`` reads only the files
+            directly in the root.
+        :return: Every Python file the user's own patterns admit.
         """
-        return self._collect_reference_files(self.root)
+        return self._collect_reference_files(self.root, recursive=recursive)
 
     def extract_from_file(self, file_path: Path) -> Iterator[CodeUnit]:
         """Yield all supported code units from a single file.

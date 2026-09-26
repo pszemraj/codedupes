@@ -932,15 +932,14 @@ class CodeAnalyzer:
             self._effective_excludes = tuple(self.config.exclude_patterns or ())
             # Duplicate detection stays intra-file, but the unused reference
             # graph should see the whole project: resolve a project root (the
-            # nearest pyproject.toml, else the git work tree, else the file's
-            # own directory) and parse every Python file under it for names
-            # the single-file target's units might otherwise look unreferenced by.
+            # nearest pyproject.toml, else the git work tree) and parse every
+            # Python file under it for names the single-file target's units
+            # might otherwise look unreferenced by. Without either boundary the
+            # file's directory could be anything (a home or downloads folder),
+            # so only the Python files beside the target are read.
             pyproject = find_pyproject(path)
-            root = (
-                pyproject.parent
-                if pyproject is not None
-                else (git_work_tree(path.parent) or path.parent)
-            )
+            project_root = pyproject.parent if pyproject is not None else git_work_tree(path.parent)
+            root = project_root or path.parent
             self._extraction_root = root
             self._python_files = list(extractor.extracted_files.get("python", []))
             if collect_unused_references and any(unit.language == "python" for unit in units):
@@ -954,7 +953,10 @@ class CodeAnalyzer:
                     respect_gitignore=self.config.respect_gitignore,
                 )
                 self._python_files = _unique_sources(
-                    [*self._python_files, *reference_extractor.reference_files()]
+                    [
+                        *self._python_files,
+                        *reference_extractor.reference_files(recursive=project_root is not None),
+                    ]
                 )
                 self._extraction_diagnostics.extend(reference_extractor.diagnostics)
         else:

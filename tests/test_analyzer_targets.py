@@ -78,23 +78,30 @@ def test_file_target_reads_references_from_the_project_tree(tmp_path: Path) -> N
     pkg = tmp_path / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
-    (pkg / "a.py").write_text("def helper():\n    return 1\n")
+    (pkg / "a.py").write_text(
+        "def helper():\n    return 1\n\n\ndef nested_helper():\n    return 2\n"
+    )
     (pkg / "b.py").write_text("from pkg.a import helper\n\n\ndef caller():\n    return helper()\n")
+    (pkg / "sub").mkdir()
+    (pkg / "sub" / "c.py").write_text(
+        "from pkg.a import nested_helper\n\n\ndef deep():\n    return nested_helper()\n"
+    )
     config = AnalyzerConfig(
         run_traditional=False, run_semantic=False, run_unused=True, strict_unused=True
     )
 
-    # Without a pyproject.toml and outside a git work tree, root falls back to
-    # the target's own directory, which still contains the sibling that
-    # references it.
+    # Without a pyproject.toml and outside a git work tree, nothing bounds the
+    # project, so only the Python files beside the target are read: the sibling
+    # still credits helper, but nothing descends into pkg/sub.
     fallback_result = CodeAnalyzer(config).analyze(pkg / "a.py")
-    assert "helper" not in {unit.name for unit in fallback_result.potentially_unused}
+    assert {unit.name for unit in fallback_result.potentially_unused} == {"nested_helper"}
+    assert fallback_result.run.unused.files == 3
 
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "demo"\n')
 
     project_result = CodeAnalyzer(config).analyze(pkg / "a.py")
-    assert [unit.qualified_name for unit in project_result.units] == ["a.helper"]
-    assert "helper" not in {unit.name for unit in project_result.potentially_unused}
+    assert [unit.qualified_name for unit in project_result.units] == ["a.helper", "a.nested_helper"]
+    assert project_result.potentially_unused == []
 
 
 def test_file_target_reports_incomplete_reference_walk(tmp_path: Path, monkeypatch) -> None:
@@ -102,7 +109,9 @@ def test_file_target_reports_incomplete_reference_walk(tmp_path: Path, monkeypat
     source = tmp_path / "entry.py"
     source.write_text("def _helper():\n    return 1\n")
 
-    def failed_reference_walk(extractor: CodeExtractor, directory: Path) -> list[Path]:
+    def failed_reference_walk(
+        extractor: CodeExtractor, directory: Path, *, recursive: bool = True
+    ) -> list[Path]:
         extractor._report_walk_error(
             PermissionError(13, "Permission denied", str(directory / "blocked"))
         )
