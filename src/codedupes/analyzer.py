@@ -936,12 +936,15 @@ class CodeAnalyzer:
             # Python file under it for names the single-file target's units
             # might otherwise look unreferenced by. Without either boundary the
             # file's directory could be anything (a home or downloads folder),
-            # so only the Python files beside the target are read.
+            # so only the Python files beside the analyzed file are read; that
+            # is the symlink's resolved target when extraction followed it.
+            self._python_files = list(extractor.extracted_files.get("python", []))
             pyproject = find_pyproject(path)
             project_root = pyproject.parent if pyproject is not None else git_work_tree(path.parent)
-            root = project_root or path.parent
+            root = project_root or (
+                self._python_files[0].parent if self._python_files else path.parent
+            )
             self._extraction_root = root
-            self._python_files = list(extractor.extracted_files.get("python", []))
             if collect_unused_references and any(unit.language == "python" for unit in units):
                 reference_extractor = CodeExtractor(
                     root,

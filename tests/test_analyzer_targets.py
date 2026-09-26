@@ -96,6 +96,11 @@ def test_file_target_reads_references_from_the_project_tree(tmp_path: Path) -> N
     fallback_result = CodeAnalyzer(config).analyze(pkg / "a.py")
     assert {unit.name for unit in fallback_result.potentially_unused} == {"nested_helper"}
     assert fallback_result.run.unused.files == 3
+    # A symlink the extractor follows to pkg/a.py reads the files beside
+    # pkg/a.py, not the files beside the link.
+    (tmp_path / "link.py").symlink_to(pkg / "a.py")
+    linked_result = CodeAnalyzer(config).analyze(tmp_path / "link.py")
+    assert {unit.name for unit in linked_result.potentially_unused} == {"nested_helper"}
 
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "demo"\n')
 
