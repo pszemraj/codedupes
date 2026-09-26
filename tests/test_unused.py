@@ -681,44 +681,52 @@ def test_reference_graph_parses_each_file_once(tmp_path: Path, monkeypatch) -> N
     }
 
 
-def test_property_read_is_a_reference(tmp_path: Path) -> None:
-    source = dedent(
-        """
-        class _Config:
-            @property
-            def width(self):
-                return 1
+@pytest.mark.parametrize(
+    ("source", "target", "referrer"),
+    [
+        pytest.param(
+            """
+            class _Config:
+                @property
+                def width(self):
+                    return 1
 
-        def _measure(config):
-            return config.width
-        """
-    ).strip()
-    units, unused = _referenced_graph(tmp_path, source)
+            def _measure(config):
+                return config.width
+            """,
+            "_Config.width",
+            "_measure",
+            id="property-read",
+        ),
+        pytest.param(
+            """
+            import shutil
 
-    assert "width" not in unused
-    assert _unit(units, "sample._Config.width").references == {_unit(units, "sample._measure").uid}
+            class _Cleaner:
+                def _on_error(self, func, path, exc_info):
+                    pass
 
+                def run(self, path):
+                    shutil.rmtree(path, onerror=self._on_error)
+            """,
+            "_Cleaner._on_error",
+            "_Cleaner.run",
+            id="bound-method-callback",
+        ),
+    ],
+)
+def test_attribute_access_is_a_reference(
+    tmp_path: Path, source: str, target: str, referrer: str
+) -> None:
+    """A property read or a bound-method callback credits the definition it names.
 
-def test_bound_method_callback_is_a_reference(tmp_path: Path) -> None:
-    source = dedent(
-        """
-        import shutil
+    The credit comes from the definition the access occurs in: a method body is
+    attributed to the method, not to its class.
+    """
+    units, unused = _referenced_graph(tmp_path, dedent(source).strip())
 
-        class _Cleaner:
-            def _on_error(self, func, path, exc_info):
-                pass
-
-            def run(self, path):
-                shutil.rmtree(path, onerror=self._on_error)
-        """
-    ).strip()
-    units, unused = _referenced_graph(tmp_path, source)
-
-    assert "_on_error" not in unused
-    # The method body is attributed to the method, not to its class.
-    assert _unit(units, "sample._Cleaner._on_error").references == {
-        _unit(units, "sample._Cleaner.run").uid
-    }
+    assert target.rsplit(".", 1)[-1] not in unused
+    assert _unit(units, f"sample.{target}").references == {_unit(units, f"sample.{referrer}").uid}
 
 
 def test_annotations_are_references(tmp_path: Path) -> None:
