@@ -650,6 +650,20 @@ def test_javascript_suppression_directive_attachment(tmp_path: Path) -> None:
             {"A": set(), "A.m": {"unused", "duplicates"}},
             id="js-above-member-decorator",
         ),
+        pytest.param(
+            "js_class_field_trailing.js",
+            "class A {\n  a = () => { return 1; }; // codedupes: ignore\n"
+            "  b = () => { return 2; };\n}\n",
+            {"A": set(), "A.a": {"unused", "duplicates"}, "A.b": set()},
+            id="js-trailing-after-class-field-terminator",
+        ),
+        pytest.param(
+            "ts_class_field_trailing.ts",
+            "class A {\n  a = (): number => { return 1; }; // codedupes: ignore[unused]\n"
+            "  b = (): number => { return 2; };\n}\n",
+            {"A": set(), "A.a": {"unused"}, "A.b": set()},
+            id="ts-trailing-after-class-field-terminator",
+        ),
     ],
 )
 def test_ecmascript_suppression_directive_positive_controls(

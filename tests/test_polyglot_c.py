@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from codedupes.extractor import CodeExtractor
 from codedupes.models import CodeUnitType
 from tests.polyglot_helpers import extract
 
@@ -118,3 +119,19 @@ def test_c_suppression_directive_attachment(tmp_path: Path) -> None:
         """,
     )
     assert (first.suppressions, last.suppressions) == (set(), {"unused", "duplicates"})
+
+    # A malformed directive inside a multi-row block comment is reported on
+    # its own row, not the comment's opening row.
+    doc_blocks = tmp_path / "doc_blocks.c"
+    doc_blocks.write_text(
+        "/*\n * codedupes: ignore[unused\n */\nint foo(void) { return 1; }\n\n"
+        "/*\n * Summary line.\n * codedupes: ignore[bogus]\n */\nint bar(void) { return 2; }\n",
+        encoding="utf-8",
+    )
+    extractor = CodeExtractor(tmp_path, include_private=True, languages=("c",))
+    units = list(extractor.extract_from_file(doc_blocks))
+    assert [unit.suppressions for unit in units] == [set(), set()]
+    assert [(d.code, d.lineno, d.end_lineno) for d in extractor.diagnostics] == [
+        ("suppression-syntax", 2, 2),
+        ("suppression-syntax", 8, 8),
+    ]

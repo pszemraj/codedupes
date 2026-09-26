@@ -8,6 +8,7 @@ project pins the official precompiled grammar wheels in ``pyproject``.
 from __future__ import annotations
 
 import builtins as builtins_module
+import codecs
 import hashlib
 import importlib
 import keyword
@@ -738,6 +739,21 @@ def parse_suppressions(text: str) -> tuple[frozenset[str], frozenset[str]]:
     return requested & SUPPRESSION_KINDS, requested - SUPPRESSION_KINDS
 
 
+def _directive_row(comment: Any, text: str) -> int:
+    """Return the zero-based row a comment's directive sits on.
+
+    A block or doc comment spanning several rows may carry its directive on a
+    later one (``/*\n * codedupes: ignore[bogus]\n */``).
+
+    :param comment: Comment node the directive was read from.
+    :param text: The comment's full text.
+    :return: The comment's first row plus the line breaks before the directive.
+    """
+    start_row, _ = _point_parts(getattr(comment, "start_point", (0, 0)))
+    match = _SUPPRESSION_RE.search(text)
+    return start_row + (0 if match is None else text.count("\n", 0, match.start()))
+
+
 def _statement_anchor(node: Any) -> Any:
     """Climb from a unit's source node to the true enclosing statement.
 
@@ -852,9 +868,11 @@ def _following_comments(
             continue
         comments.append(comment)
     # C and Rust parse a comment after a one-line unit's closing brace as the
-    # unit's next sibling rather than a descendant.
+    # unit's next sibling rather than a descendant; a JS/TS class field's
+    # terminating ``;`` is an anonymous sibling in between, so skip to the
+    # next named one.
     end_row = int(getattr(anchor, "end_point", (-1, 0))[0])
-    trailing = getattr(anchor, "next_sibling", None)
+    trailing = getattr(anchor, "next_named_sibling", None)
     if (
         int(getattr(anchor, "start_point", (-1, 0))[0]) == end_row
         and trailing is not None
@@ -875,7 +893,12 @@ def _own_line(comment: Any, source: bytes) -> bool:
     start_byte = int(getattr(comment, "start_byte", 0))
     column = int(getattr(comment, "start_point", (0, 0))[1])
     row_start = max(0, start_byte - column)
-    return source[row_start:start_byte].strip() == b""
+    # Unit byte offsets stay on-disk, so a UTF-8 BOM is still in the source and
+    # counts toward row 0's columns; it is not code sharing the comment's row.
+    prefix = source[row_start:start_byte]
+    if row_start == 0:
+        prefix = prefix.removeprefix(codecs.BOM_UTF8)
+    return prefix.strip() == b""
 
 
 def _leading_comments(anchor: Any, source: bytes) -> list[Any]:
@@ -1029,6 +1052,7 @@ class TreeSitterBackend:
         *,
         code: str,
         severity: str = "warning",
+        row: int | None = None,
     ) -> ExtractionDiagnostic:
         """Build an extraction diagnostic anchored to one node's line span.
 
@@ -1037,10 +1061,13 @@ class TreeSitterBackend:
         :param message: Human-readable diagnostic text.
         :param code: Machine-readable diagnostic code.
         :param severity: Diagnostic severity, defaults to ``"warning"``.
+        :param row: Zero-based row to report instead of the node's span.
         :return: Diagnostic describing the node.
         """
         start_row, _ = _point_parts(getattr(node, "start_point", (0, 0)))
         end_row, _ = _point_parts(getattr(node, "end_point", (start_row, 0)))
+        if row is not None:
+            start_row = end_row = row
         return ExtractionDiagnostic(
             file_path=file_path,
             language=self.language,
@@ -1164,8 +1191,9 @@ class TreeSitterBackend:
         for spec in deduped.values():
             known: set[str] = set()
             for comment in self._attached_comments(spec, source):
+                text = _node_text(source, comment)
                 try:
-                    comment_known, comment_unknown = parse_suppressions(_node_text(source, comment))
+                    comment_known, comment_unknown = parse_suppressions(text)
                 except ValueError as exc:
                     diagnostics.append(
                         self._diagnostic_for_node(
@@ -1173,6 +1201,7 @@ class TreeSitterBackend:
                             comment,
                             f"Invalid suppression directive on {spec.qualified_name}: {exc}.",
                             code="suppression-syntax",
+                            row=_directive_row(comment, text),
                         )
                     )
                     continue
@@ -1186,6 +1215,7 @@ class TreeSitterBackend:
                             f"{', '.join(sorted(comment_unknown))}; known kinds are "
                             f"{', '.join(sorted(SUPPRESSION_KINDS))}.",
                             code="suppression-syntax",
+                            row=_directive_row(comment, text),
                         )
                     )
             own_suppressions[id(spec)] = frozenset(known)

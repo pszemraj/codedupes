@@ -757,6 +757,14 @@ def test_python_directive_attachment(tmp_path: Path) -> None:
     )
     assert blank_line_breaks["blank_line_breaks.f"].suppressions == set()
 
+    # A UTF-8 BOM before a first-row directive is not code sharing its row.
+    bom_first_row = python_units(
+        tmp_path,
+        "\ufeff# codedupes: ignore\ndef f():\n    return 1\n",
+        filename="bom_first_row.py",
+    )
+    assert bom_first_row["bom_first_row.f"].suppressions == {"unused", "duplicates"}
+
     # Diagnostic smokes: the grammar itself (unknown kind, unclosed kind
     # list, text run onto a bare ``ignore``) is pinned by
     # test_tree_sitter_backend_unit.py; these only prove both diagnostic paths
