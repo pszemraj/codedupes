@@ -225,13 +225,13 @@ def run_traditional_analysis(
 
     :param units: Candidate code units.
     :param jaccard_threshold: Similarity threshold for near-duplicate detection.
-    :return: Exact duplicates and near duplicates.
+    :return: Exact duplicates (token-first, so a pair exact under both fingerprints is labelled ``token_hash``) and near duplicates.
     """
     logger.info(f"Running traditional analysis on {len(units)} code units")
 
     structural_dupes = _find_exact_duplicates(units, "structural_hash", "structural_hash")
     token_dupes = _find_exact_duplicates(units, "token_hash", "token_hash")
-    exact = _dedupe_duplicate_pairs(structural_dupes + token_dupes)
+    exact = _dedupe_duplicate_pairs(token_dupes + structural_dupes)
     logger.debug(f"Found {len(exact)} exact duplicates before caller filtering")
 
     near = find_near_duplicates_jaccard(units, threshold=jaccard_threshold)

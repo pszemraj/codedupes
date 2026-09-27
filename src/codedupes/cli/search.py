@@ -106,7 +106,7 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
         output_width=opts.output_width,
     ):
         try:
-            config = opts.to_analysis_config(path)
+            config = opts.to_analysis_config()
         except ValueError as exc:
             raise click.UsageError(str(exc)) from exc
 
@@ -142,9 +142,11 @@ def search_command(ctx: click.Context, path: Path, query: str, **params: Any) ->
                     results,
                     indexed_units,
                     analyzer.embedding_stats,
+                    run=analyzer.run_record,
                     extraction_diagnostics=analyzer.extraction_diagnostics,
                     semantic_diagnostics=analyzer.semantic_diagnostics,
                     file_results=file_results,
+                    query_execution=analyzer.query_execution,
                 )
             )
         else:

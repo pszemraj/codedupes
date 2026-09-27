@@ -54,7 +54,7 @@ An indexed corpus retains its source commit even without persistent storage. Que
 
 ### Local directories
 
-The local-directory content fingerprint hashes file contents, including files reached through symlinked subdirectories. It excludes `.git/`, Hugging Face download metadata, `.gitignore`, `.gitattributes`, Markdown/reStructuredText documentation, and case-insensitive `README`, `LICENSE`, and `NOTICE` basenames with no extension or a `.txt` extension. These names are matched exactly: assets such as `license_head.safetensors` and `notice_tokens.json` still contribute. All remaining files still contribute, including weights and shards, tokenizer assets, configuration, pooling/Dense modules, and custom model code. Per-file digests are reused from `<cache_root>/local-models/` when size, mtime, ctime, and inode match, keeping unchanged runs to a stat walk. A no-cache run maintains this information only in memory; enabling caching later can persist it. Previously cached local directories containing excluded files may miss once under the revised fingerprint; no migration is required.
+The local-directory content fingerprint hashes file contents, including files reached through symlinked subdirectories. It excludes `.git/`, Hugging Face download metadata, `.gitignore`, `.gitattributes`, Markdown/reStructuredText documentation, and case-insensitive `README`, `LICENSE`, and `NOTICE` basenames with no extension or a `.txt` extension. These names are matched exactly: assets such as `license_head.safetensors` and `notice_tokens.json` still contribute. All remaining files still contribute, including weights and shards, tokenizer assets, configuration, pooling/Dense modules, and custom model code. Per-file digests are reused from `<cache_root>/local-models/` when size, mtime, ctime, and inode match, keeping unchanged runs to a stat walk. A no-cache run maintains this information only in memory; enabling caching later can persist it.
 
 Model loading checks fingerprints before and after reading weights. A change during loading triggers one reload; a second change fails the run. Earlier hits are discarded if their fingerprint differs from the loaded weights.
 
@@ -79,6 +79,8 @@ Directory targets use that directory as their cache scope; file targets use thei
 A successful directory scan is complete for its selection, including explicit excludes. Repeated scans with the same exclude patterns detect deletions and age orphaned rows; changing the patterns establishes a separate baseline.
 
 A file target publishes an incomplete observation. It merges into the prior selection instead of deleting unseen siblings. A single-file scan replaces only that file's baseline slice, so observed edits or eligibility changes can orphan old keys. It neither advances the complete-scan clock nor refreshes the pin age of unseen units.
+
+`check --focus` does not change any of this: the analyzer still scans and embeds the full target, so the cache scope, selection, and complete/incomplete status are exactly what an unfocused `check` of the same target would produce. Focus only filters the report and exit code afterward; see [focused reports](output.md#focused-reports).
 
 ### Orphan collection
 

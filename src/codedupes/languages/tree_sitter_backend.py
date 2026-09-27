@@ -7,9 +7,12 @@ project pins the official precompiled grammar wheels in ``pyproject``.
 
 from __future__ import annotations
 
+import bisect
 import builtins as builtins_module
+import codecs
 import hashlib
 import importlib
+import itertools
 import keyword
 import re
 import threading
@@ -209,6 +212,32 @@ class UnitSpec:
     native_kind: str
     is_public: bool
     is_exported: bool
+
+
+def _enclosure_test(spans: Iterable[tuple[int, int]]) -> Callable[[tuple[int, int]], bool]:
+    """Build a test for whether any of a set of byte spans encloses (or equals) a span.
+
+    Some span encloses ``(start, end)`` exactly when the furthest end among
+    the spans starting at or before ``start`` reaches ``end``, so sorting once
+    answers each query by bisection instead of a scan over every span.
+
+    :param spans: Candidate enclosing ``(start, end)`` byte spans.
+    :return: Predicate over a ``(start, end)`` byte span.
+    """
+    ordered = sorted(spans)
+    starts = [start for start, _ in ordered]
+    reach = list(itertools.accumulate((end for _, end in ordered), max))
+
+    def encloses(inner: tuple[int, int]) -> bool:
+        """Report whether any span encloses ``inner``.
+
+        :param inner: ``(start, end)`` byte span to test.
+        :return: ``True`` when some span starts at or before it and ends at or after it.
+        """
+        index = bisect.bisect_right(starts, inner[0])
+        return index > 0 and reach[index - 1] >= inner[1]
+
+    return encloses
 
 
 def _spec_span(spec: UnitSpec) -> tuple[int, int]:
@@ -524,7 +553,7 @@ def _structural_hash(
     *,
     policy: HashPolicy = DEFAULT_HASH_POLICY,
 ) -> str:
-    """Fingerprint a subtree with local identifiers, literals, and comments normalized.
+    """Fingerprint a subtree with local identifiers, string literals, and comments normalized.
 
     :param node: Unit node to fingerprint.
     :param source: Full file source bytes.
@@ -687,6 +716,276 @@ def _collect_identifiers(node: Any, source: bytes, builtins: frozenset[str]) -> 
     return frozenset(identifiers)
 
 
+SUPPRESSION_KINDS = frozenset({"unused", "duplicates"})
+# Matches ``codedupes: ignore`` with an optional ``[kind, kind, ...]`` list;
+# free text after the closing bracket (a reason) is not captured. Matching is
+# case-sensitive and searched rather than anchored, so it finds the directive
+# inside a comment's own delimiters (``# codedupes: ignore``, ``// ...``);
+# ``ignored`` and ``noqa: codedupes`` do not match. ``\b`` alone would also
+# accept ``ignore-me`` or ``ignore:``, so parse_suppressions checks what
+# follows a bare ``ignore``.
+_SUPPRESSION_RE = re.compile(r"\bcodedupes:[ \t]*ignore\b(?:[ \t]*\[([^\]\r\n]*)\])?")
+# What may directly follow a bare ``ignore``: whitespace (then a free-text
+# reason), a block comment's closing ``*/``, or the end of the comment.
+_BARE_DIRECTIVE_END_RE = re.compile(r"\s|\*/|$")
+# A wrapping declaration/statement node a unit's source node can sit inside;
+# comments attach to the outermost one, not to the inner binding node.
+_STATEMENT_WRAPPER_TYPES = frozenset(
+    {"export_statement", "lexical_declaration", "variable_declaration", "expression_statement"}
+)
+# Rust attributes (``#[inline]``) and TypeScript class-member decorators
+# (``@Deco()``, parsed as siblings of the member) sit between a comment and the
+# item they decorate; they are transparent to the leading-comment walk.
+_TRANSPARENT_ITEM_TYPES = frozenset({"attribute_item", "decorator"})
+
+
+def parse_suppressions(text: str) -> tuple[frozenset[str], frozenset[str]]:
+    """Parse a ``codedupes: ignore`` directive out of one comment's text.
+
+    :param text: Full comment text, delimiters included.
+    :return: Recognized suppression kinds, and any unrecognized kind names
+        (both empty when the comment carries no directive at all); no
+        bracket means every kind.
+    :raises ValueError: If a kind list opens without a closing bracket, or a
+        bare ``ignore`` runs straight into other text (``ignore-me``).
+    """
+    match = _SUPPRESSION_RE.search(text)
+    if match is None:
+        return frozenset(), frozenset()
+    bracket = match.group(1)
+    if bracket is None:
+        rest = text[match.end() :]
+        if rest.lstrip(" \t").startswith("["):
+            raise ValueError("Unclosed suppression kind list")
+        if not _BARE_DIRECTIVE_END_RE.match(rest):
+            raise ValueError(
+                f"Unexpected {rest[0]!r} directly after 'ignore'; expected whitespace, "
+                "a [kind, ...] list, or the end of the comment"
+            )
+        return SUPPRESSION_KINDS, frozenset()
+    requested = frozenset(part.strip() for part in bracket.split(",") if part.strip())
+    return requested & SUPPRESSION_KINDS, requested - SUPPRESSION_KINDS
+
+
+def _directive_row(comment: Any, text: str) -> int:
+    """Return the zero-based row a comment's directive sits on.
+
+    A block or doc comment spanning several rows may carry its directive on a
+    later one (``/*\n * codedupes: ignore[bogus]\n */``).
+
+    :param comment: Comment node the directive was read from.
+    :param text: The comment's full text.
+    :return: The comment's first row plus the line breaks before the directive.
+    """
+    start_row, _ = _point_parts(getattr(comment, "start_point", (0, 0)))
+    match = _SUPPRESSION_RE.search(text)
+    return start_row + (0 if match is None else text.count("\n", 0, match.start()))
+
+
+def _statement_anchor(node: Any) -> Any:
+    """Climb from a unit's source node to the true enclosing statement.
+
+    A bound unit's source node (a ``variable_declarator``, an
+    ``assignment_expression``) sits inside one or more wrapping statement
+    nodes; a leading or trailing comment attaches to the outermost one
+    (``export const foo = ...`` reads a comment above ``export``, not above
+    ``foo``), not to the inner binding node.
+
+    :param node: Unit source node to climb from.
+    :return: The outermost enclosing statement node, or ``node`` unchanged
+        when nothing wraps it.
+    """
+    current = node
+    parent = getattr(current, "parent", None)
+    while parent is not None and getattr(parent, "type", "") in _STATEMENT_WRAPPER_TYPES:
+        current = parent
+        parent = getattr(current, "parent", None)
+    return current
+
+
+def _comments_on_rows(node: Any, rows: frozenset[int]) -> list[Any]:
+    """Collect comment descendants of a subtree whose start row is in a row set.
+
+    :param node: Subtree root; not itself tested.
+    :param rows: Row numbers a comment must start on to match.
+    :return: Matching comments in document order.
+    """
+    return [
+        descendant
+        for descendant in _walk(node)
+        if descendant is not node
+        and _is_comment(descendant)
+        and int(getattr(descendant, "start_point", (-1, 0))[0]) in rows
+    ]
+
+
+def _owns_comment(
+    comment: Any, anchor: Any, spec: UnitSpec, header_node_types: frozenset[str]
+) -> bool:
+    """Decide whether a comment descendant of ``anchor`` belongs to this unit.
+
+    Walks upward from the comment's parent toward ``anchor``. Reaching the
+    unit's own ``spec.node``, ``spec.source_node``, ``anchor``, or the
+    definition that holds its body (a Python ``def`` or ``class`` inside its
+    ``decorated_definition``) through header structure alone (parameter
+    lists and parameters, type-parameter lists, class bases, where clauses,
+    the body block) means the comment is the unit's own. Any other node on
+    the way -- a default value, a type annotation, a decorator argument, a
+    nested function, class, or callback -- owns it instead, so a directive
+    there annotates that expression or scope rather than the unit. Unlisted
+    syntax fails toward not attaching.
+
+    :param comment: Candidate comment, a descendant of ``anchor``.
+    :param anchor: Statement anchor from :func:`_statement_anchor`.
+    :param spec: Unit spec being inspected.
+    :param header_node_types: Backend's header-structure node kinds.
+    :return: ``True`` when the comment belongs to this unit.
+    """
+    definition = getattr(spec.body, "parent", None)
+    current = getattr(comment, "parent", None)
+    while current is not None:
+        if (
+            _same_node(current, anchor)
+            or _same_node(current, spec.node)
+            or _same_node(current, spec.source_node)
+            or _same_node(current, definition)
+        ):
+            return True
+        if getattr(current, "type", "") not in header_node_types:
+            return False
+        current = getattr(current, "parent", None)
+    return True
+
+
+def _following_comments(
+    anchor: Any,
+    rows: frozenset[int],
+    spec: UnitSpec,
+    source: bytes,
+    header_node_types: frozenset[str],
+) -> list[Any]:
+    """Collect comments trailing within a unit's header rows.
+
+    Covers a comment trailing the ``def``/signature line or a row of a
+    multi-row signature, sitting between decorators or attributes, trailing
+    the opening brace of a body on its own row (``{ // codedupes: ignore``),
+    or ending a one-line unit. A descendant candidate that
+    :func:`_owns_comment` places inside an expression or nested scope is
+    dropped: it lies in the unit's header rows without belonging to the unit.
+
+    :param anchor: Statement anchor from :func:`_statement_anchor`.
+    :param rows: Header rows from :meth:`TreeSitterBackend._header_rows`.
+    :param spec: Unit spec being inspected, for comment-ownership resolution.
+    :param source: Full file source bytes.
+    :param header_node_types: Backend's header-structure node kinds.
+    :return: Matching comments in document order.
+    """
+    body = spec.body
+    body_start = int(getattr(body, "start_byte", 0))
+    comments = []
+    for comment in _comments_on_rows(anchor, rows):
+        if not _owns_comment(comment, anchor, spec, header_node_types):
+            continue
+        comment_start = int(getattr(comment, "start_byte", 0))
+        # With more body after it, a comment trails a statement or nested
+        # unit inside the body, unless only the opening brace precedes it
+        # (`{ // codedupes: ignore`). A comment ending a one-line unit
+        # (`def f(): return 1  # ...`, `f() { ... } // ...`) is the unit's.
+        body_follows = any(
+            not _is_comment(child) and int(getattr(child, "start_byte", 0)) > comment_start
+            for child in _children(body)
+        )
+        if body_follows and source[body_start:comment_start].strip() not in {b"", b"{"}:
+            continue
+        comments.append(comment)
+    # C and Rust parse a comment after a one-line unit's closing brace as the
+    # unit's next sibling rather than a descendant; a JS/TS class field's
+    # terminating ``;`` is an anonymous sibling in between, so skip to the
+    # next named one.
+    end_row = int(getattr(anchor, "end_point", (-1, 0))[0])
+    trailing = getattr(anchor, "next_named_sibling", None)
+    if (
+        int(getattr(anchor, "start_point", (-1, 0))[0]) == end_row
+        and trailing is not None
+        and _is_comment(trailing)
+        and int(getattr(trailing, "start_point", (-1, 0))[0]) == end_row
+    ):
+        comments.append(trailing)
+    return comments
+
+
+def _own_line(comment: Any, source: bytes) -> bool:
+    """Report whether only whitespace precedes a comment on its source row.
+
+    :param comment: Comment node.
+    :param source: Full file source bytes.
+    :return: ``True`` when the comment is not trailing other code.
+    """
+    start_byte = int(getattr(comment, "start_byte", 0))
+    column = int(getattr(comment, "start_point", (0, 0))[1])
+    row_start = max(0, start_byte - column)
+    # Unit byte offsets stay on-disk, so a UTF-8 BOM is still in the source and
+    # counts toward row 0's columns; it is not code sharing the comment's row.
+    prefix = source[row_start:start_byte]
+    if row_start == 0:
+        prefix = prefix.removeprefix(codecs.BOM_UTF8)
+    return prefix.strip() == b""
+
+
+def _leading_comments(anchor: Any, source: bytes) -> list[Any]:
+    """Collect the contiguous own-line comment block directly above a statement.
+
+    Walks preceding named siblings backward, stopping at the first
+    non-comment, the first comment sharing a row with other code, or the
+    first row gap between two rows. A Rust ``attribute_item`` or a TypeScript
+    member ``decorator`` is transparent: skipped without breaking the chain
+    or counting as a comment, and a comment trailing one on its row still
+    counts. When the anchor has no preceding sibling of its own, the search
+    hops to the anchor's parent once, so a comment that tree-sitter attaches
+    to the enclosing definition (a class, for its first method) rather than
+    to the block still counts; a second hop never happens, so the enclosing
+    definition's own leading comment is never reached.
+
+    :param anchor: Statement anchor from :func:`_statement_anchor`.
+    :param source: Full file source bytes.
+    :return: Matching comments, earliest (outermost) first.
+    """
+    collected: list[Any] = []
+    scan_target = anchor
+    reference_row = int(getattr(anchor, "start_point", (0, 0))[0])
+    current = getattr(anchor, "prev_named_sibling", None)
+    hopped = False
+    while True:
+        if current is None:
+            parent = getattr(scan_target, "parent", None)
+            if hopped or parent is None:
+                break
+            hopped = True
+            scan_target = parent
+            reference_row = int(getattr(parent, "start_point", (0, 0))[0])
+            current = getattr(parent, "prev_named_sibling", None)
+            continue
+        if getattr(current, "type", "") in _TRANSPARENT_ITEM_TYPES:
+            reference_row = int(getattr(current, "start_point", (0, 0))[0])
+            current = getattr(current, "prev_named_sibling", None)
+            continue
+        if not _is_comment(current):
+            break
+        if not _own_line(current, source):
+            decorated = getattr(current, "prev_named_sibling", None)
+            if getattr(decorated, "type", "") not in _TRANSPARENT_ITEM_TYPES or int(
+                getattr(decorated, "end_point", (-1, 0))[0]
+            ) != int(getattr(current, "start_point", (0, 0))[0]):
+                break
+        if int(getattr(current, "end_point", (0, 0))[0]) + 1 < reference_row:
+            break
+        collected.append(current)
+        reference_row = int(getattr(current, "start_point", (0, 0))[0])
+        current = getattr(current, "prev_named_sibling", None)
+    collected.reverse()
+    return collected
+
+
 class TreeSitterBackend:
     """Shared parse, diagnostics, fingerprint, and unit-construction machinery."""
 
@@ -695,6 +994,13 @@ class TreeSitterBackend:
     statement_types: frozenset[str] = frozenset()
     nested_scope_types: frozenset[str] = frozenset()
     class_member_types: frozenset[str] = frozenset()
+    # Blocks that hold units without being one (Rust ``impl``/``trait``/``mod``,
+    # a TypeScript ``namespace``), by node type with a label for diagnostics:
+    # a directive attached to one applies to every unit inside it.
+    directive_containers: ClassVar[dict[str, str]] = {}
+    # Syntax between a unit's own node and a comment inside its header rows
+    # that keeps the comment the unit's (see :func:`_owns_comment`).
+    header_node_types: ClassVar[frozenset[str]] = frozenset()
     builtins: frozenset[str] = frozenset()
     hash_policy: ClassVar[HashPolicy] = DEFAULT_HASH_POLICY
 
@@ -783,6 +1089,7 @@ class TreeSitterBackend:
         *,
         code: str,
         severity: str = "warning",
+        row: int | None = None,
     ) -> ExtractionDiagnostic:
         """Build an extraction diagnostic anchored to one node's line span.
 
@@ -791,10 +1098,13 @@ class TreeSitterBackend:
         :param message: Human-readable diagnostic text.
         :param code: Machine-readable diagnostic code.
         :param severity: Diagnostic severity, defaults to ``"warning"``.
+        :param row: Zero-based row to report instead of the node's span.
         :return: Diagnostic describing the node.
         """
         start_row, _ = _point_parts(getattr(node, "start_point", (0, 0)))
         end_row, _ = _point_parts(getattr(node, "end_point", (start_row, 0)))
+        if row is not None:
+            start_row = end_row = row
         return ExtractionDiagnostic(
             file_path=file_path,
             language=self.language,
@@ -804,6 +1114,112 @@ class TreeSitterBackend:
             lineno=start_row + 1,
             end_lineno=end_row + 1,
         )
+
+    def _header_rows(self, anchor: Any, spec: UnitSpec) -> frozenset[int]:
+        """Return the row span a trailing suppression comment may appear on.
+
+        Spans the anchor's first row through the body's first row inclusive,
+        so a comment trailing the opening brace of the body on its own row
+        (``{ // codedupes: ignore``) is covered.
+
+        :param anchor: Statement anchor from :func:`_statement_anchor`.
+        :param spec: Unit spec being inspected.
+        :return: Header row numbers.
+        """
+        start_row = int(getattr(anchor, "start_point", (0, 0))[0])
+        body_row = int(getattr(spec.body, "start_point", (start_row, 0))[0])
+        return frozenset(range(start_row, body_row + 1))
+
+    def _attached_comments(self, spec: UnitSpec, source: bytes) -> list[Any]:
+        """Collect every comment that can carry a suppression directive for one unit.
+
+        :param spec: Unit spec being inspected.
+        :param source: Full file source bytes.
+        :return: Leading block comments (earliest first) followed by
+            header-row trailing comments, in document order.
+        """
+        anchor = _statement_anchor(spec.source_node)
+        rows = self._header_rows(anchor, spec)
+        return [
+            *_leading_comments(anchor, source),
+            *_following_comments(anchor, rows, spec, source, self.header_node_types),
+        ]
+
+    def _container_comments(self, container: Any, source: bytes) -> list[Any]:
+        """Collect the comments that can carry a directive for a non-unit container block.
+
+        The block is inspected as if it were a unit, so it attaches comments the
+        same ways: a leading block above it, a comment trailing its opening row,
+        or one ending a one-line block.
+
+        :param container: Container node (a Rust ``impl_item``, for example).
+        :param source: Full file source bytes.
+        :return: Attached comments; empty for a block without a body (``mod m;``).
+        """
+        body = container.child_by_field_name("body")
+        if body is None:
+            return []
+        block = UnitSpec(
+            node=container,
+            source_node=container,
+            body=body,
+            name="",
+            qualified_name="",
+            unit_type=CodeUnitType.CLASS,
+            native_kind=str(getattr(container, "type", "")),
+            is_public=False,
+            is_exported=False,
+        )
+        return self._attached_comments(block, source)
+
+    def _directive_kinds(
+        self,
+        file_path: Path,
+        comments: list[Any],
+        owner: str,
+        source: bytes,
+        diagnostics: list[ExtractionDiagnostic],
+    ) -> frozenset[str]:
+        """Parse the directives in a unit's or block's attached comments.
+
+        :param file_path: File being extracted, for diagnostics.
+        :param comments: Attached comment nodes.
+        :param owner: What the comments are attached to, for diagnostic messages.
+        :param source: Full file source bytes.
+        :param diagnostics: Receives one ``suppression-syntax`` diagnostic per
+            malformed directive or unknown kind list.
+        :return: Recognized suppression kinds across the comments.
+        """
+        known: set[str] = set()
+        for comment in comments:
+            text = _node_text(source, comment)
+            try:
+                comment_known, comment_unknown = parse_suppressions(text)
+            except ValueError as exc:
+                diagnostics.append(
+                    self._diagnostic_for_node(
+                        file_path,
+                        comment,
+                        f"Invalid suppression directive on {owner}: {exc}.",
+                        code="suppression-syntax",
+                        row=_directive_row(comment, text),
+                    )
+                )
+                continue
+            known |= comment_known
+            if comment_unknown:
+                diagnostics.append(
+                    self._diagnostic_for_node(
+                        file_path,
+                        comment,
+                        f"Unknown suppression kind(s) on {owner}: "
+                        f"{', '.join(sorted(comment_unknown))}; known kinds are "
+                        f"{', '.join(sorted(SUPPRESSION_KINDS))}.",
+                        code="suppression-syntax",
+                        row=_directive_row(comment, text),
+                    )
+                )
+        return frozenset(known)
 
     def extract_file(self, file_path: Path) -> BackendResult:
         """Parse one file and build its code units and parse diagnostics.
@@ -877,9 +1293,60 @@ class TreeSitterBackend:
         # emitting a private class's methods or a private function's inner
         # definitions would leak internals under a name whose owner was never
         # reported, and nothing outside the container can reach them.
-        private_container_spans = [
+        in_private_container = _enclosure_test(
             _spec_span(spec) for spec in deduped.values() if not self._include_spec(spec)
+        )
+
+        # A directive applies to its own unit and to every unit nested inside
+        # it (the same span containment as private containers), so each
+        # unit's and container block's own suppressions are collected first,
+        # then propagated by span, one enclosure test per kind.
+        scoped_suppressions: list[tuple[tuple[int, int], frozenset[str]]] = [
+            (
+                _spec_span(spec),
+                self._directive_kinds(
+                    file_path,
+                    self._attached_comments(spec, source),
+                    spec.qualified_name,
+                    source,
+                    diagnostics,
+                ),
+            )
+            for spec in deduped.values()
         ]
+        containers: dict[tuple[int, int], Any] = {}
+        for spec in deduped.values():
+            ancestor = getattr(spec.node, "parent", None)
+            while ancestor is not None:
+                if getattr(ancestor, "type", "") in self.directive_containers:
+                    span = (int(ancestor.start_byte), int(ancestor.end_byte))
+                    containers.setdefault(span, ancestor)
+                ancestor = getattr(ancestor, "parent", None)
+        for span, container in sorted(containers.items(), key=lambda item: item[0]):
+            row, _ = _point_parts(getattr(container, "start_point", (0, 0)))
+            owner = f"the {self.directive_containers[container.type]} at line {row + 1}"
+            scoped_suppressions.append(
+                (
+                    span,
+                    self._directive_kinds(
+                        file_path,
+                        self._container_comments(container, source),
+                        owner,
+                        source,
+                        diagnostics,
+                    ),
+                )
+            )
+        in_kind_scope = {
+            kind: _enclosure_test(scope for scope, kinds in scoped_suppressions if kind in kinds)
+            for kind in SUPPRESSION_KINDS
+        }
+        suppressions: dict[int, frozenset[str]] = {}
+        for spec in deduped.values():
+            span = _spec_span(spec)
+            suppressions[id(spec)] = frozenset(
+                kind for kind, encloses in in_kind_scope.items() if encloses(span)
+            )
 
         units: list[CodeUnit] = []
         for spec in sorted(
@@ -892,10 +1359,7 @@ class TreeSitterBackend:
         ):
             if not self._include_spec(spec):
                 continue
-            spec_start, spec_end = _spec_span(spec)
-            if any(
-                start <= spec_start and spec_end <= end for start, end in private_container_spans
-            ):
+            if in_private_container(_spec_span(spec)):
                 continue
             if _contains_error(spec.node):
                 diagnostics.append(
@@ -947,6 +1411,7 @@ class TreeSitterBackend:
                     is_public=spec.is_public,
                     is_dunder=spec.name.startswith("__") and spec.name.endswith("__"),
                     is_exported=spec.is_exported,
+                    suppressions=suppressions[id(spec)],
                 )
             )
 
@@ -1205,6 +1670,21 @@ class PythonBackend(TreeSitterBackend):
     nested_scope_types = frozenset(
         {"function_definition", "class_definition", "decorated_definition"}
     )
+    header_node_types = frozenset(
+        {
+            "block",
+            "decorator",
+            "parameters",
+            "default_parameter",
+            "typed_parameter",
+            "typed_default_parameter",
+            "list_splat_pattern",
+            "dictionary_splat_pattern",
+            # Class bases; a call's arguments always sit under a ``call``,
+            # which is not header structure, so they never reach the unit.
+            "argument_list",
+        }
+    )
     builtins = _PYTHON_BUILTINS
     hash_policy = HashPolicy(
         prune_structural=_python_prune_structural,
@@ -1227,6 +1707,30 @@ class PythonBackend(TreeSitterBackend):
         """
         name = spec.name
         return self.include_private or not (name.startswith("_") and not name.startswith("__"))
+
+    def _header_rows(self, anchor: Any, spec: UnitSpec) -> frozenset[int]:
+        """Bound Python header rows to the decorators and signature, never the body.
+
+        The header ends on the row of the ``:`` that closes the signature, so
+        a comment after ``):`` on a multi-row signature is the unit's own. The
+        base range would run to the body's first row instead, and a comment
+        on an own row between the signature and the body is a child of this
+        definition rather than its ``block`` in tree-sitter's tree: it leads
+        the first body statement (:func:`_leading_comments` finds it for a
+        nested definition by hopping to the parent), not this unit.
+
+        :param anchor: Statement anchor (the definition or its decorated wrapper).
+        :param spec: Unit spec being inspected.
+        :return: Header row numbers, from the first decorator through the ``:`` row.
+        """
+        start_row = int(getattr(anchor, "start_point", (0, 0))[0])
+        def_node = getattr(spec.body, "parent", None)
+        colon_rows = [
+            int(getattr(child, "end_point", (start_row, 0))[0])
+            for child in _children(def_node)
+            if getattr(child, "type", "") == ":"
+        ]
+        return frozenset(range(start_row, (colon_rows[0] if colon_rows else start_row) + 1))
 
     def _statement_count(self, body: Any, unit_type: CodeUnitType, source: bytes) -> int:
         """Count executable statements, excluding a docstring, for every unit kind.
@@ -1400,6 +1904,15 @@ class CBackend(TreeSitterBackend):
         }
     )
     nested_scope_types = frozenset({"function_definition"})
+    header_node_types = frozenset(
+        {
+            "compound_statement",
+            "function_declarator",
+            "pointer_declarator",
+            "parameter_list",
+            "parameter_declaration",
+        }
+    )
     builtins = frozenset(
         {
             "sizeof",
@@ -1505,6 +2018,23 @@ class RustBackend(TreeSitterBackend):
     # kinds as well would double-count the same statement.
     statement_types = frozenset({"let_declaration", "expression_statement"})
     nested_scope_types = frozenset({"function_item", "closure_expression"})
+    header_node_types = frozenset(
+        {
+            "block",
+            "declaration_list",
+            "parameters",
+            "parameter",
+            "self_parameter",
+            "type_parameters",
+            "where_clause",
+            "where_predicate",
+        }
+    )
+    directive_containers: ClassVar[dict[str, str]] = {
+        "impl_item": "impl block",
+        "trait_item": "trait block",
+        "mod_item": "mod block",
+    }
     builtins = frozenset(
         {
             "self",
@@ -1873,6 +2403,20 @@ class ECMAScriptBackend(TreeSitterBackend):
     )
     class_member_types = frozenset(
         {"method_definition", "field_definition", "public_field_definition", "class_static_block"}
+    )
+    header_node_types = frozenset(
+        {
+            "statement_block",
+            "class_body",
+            "decorator",
+            "formal_parameters",
+            "required_parameter",
+            "optional_parameter",
+            "type_parameters",
+            "class_heritage",
+            "extends_clause",
+            "implements_clause",
+        }
     )
     builtins = frozenset(
         {
@@ -2453,6 +2997,7 @@ class TypeScriptBackend(ECMAScriptBackend):
     nested_scope_types = ECMAScriptBackend.nested_scope_types | frozenset(
         {"abstract_class_declaration"}
     )
+    directive_containers: ClassVar[dict[str, str]] = {"internal_module": "namespace"}
 
 
 def create_backend(

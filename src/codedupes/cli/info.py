@@ -189,6 +189,10 @@ def info_command(output_width: int, verbose: bool) -> None:
                         f"Default excluded directory names ({len(DEFAULT_EXCLUDE_DIR_NAMES)} total)",
                         ", ".join(sorted(DEFAULT_EXCLUDE_DIR_NAMES)),
                     ),
+                    (
+                        "Git-ignored paths",
+                        "skipped by directory scans inside a git work tree (--no-gitignore scans them)",
+                    ),
                 ],
             )
         )

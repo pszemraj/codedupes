@@ -52,3 +52,4 @@ See [output and exit codes](docs/output.md) for findings and CI behavior. [Analy
 | Develop and test this project | [Development setup](docs/install.md#local-development-editable-install) |
 | Reproduce calibration experiments | [Hybrid gate tuning](docs/hybrid-tuning.md) |
 | Review upcoming behavior changes | [Next release changes](docs/release-notes-next.md) |
+| Check whether a missing capability was considered | [Deferred work](docs/deferred-work.md) |

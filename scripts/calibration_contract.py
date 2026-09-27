@@ -83,10 +83,6 @@ class Project:
     def id(self) -> str:
         return self.spec["id"]
 
-    @property
-    def annotations_path(self) -> Path:
-        return self.manifest_path.parent / self.spec["annotations"]
-
 
 def load_projects(
     manifest_path: Path = DEFAULT_MANIFEST,
@@ -201,7 +197,7 @@ def extract_project(
         extractor = CodeExtractor(
             root if root.is_dir() else root.parent,
             include_private=True if inventory else project.policy.get("include_private", True),
-            exclude_patterns=[] if include_tests else None,
+            default_excludes=not include_tests,
             languages=project.spec["languages"],
         )
         found = (
@@ -222,7 +218,15 @@ class ProjectAnalyzer(CodeAnalyzer):
         super().__init__(config)
         self.project = project
 
-    def _extract_corpus_units(self, path: Path) -> list[CodeUnit]:
+    def _extract_corpus_units(
+        self, path: Path, *, collect_unused_references: bool
+    ) -> list[CodeUnit]:
+        """Extract manifest-selected units for analysis or indexing.
+
+        :param path: Requested project path; the manifest selects the files.
+        :param collect_unused_references: Ignored because the manifest fixes the scope.
+        :return: Extracted project units.
+        """
         units, diagnostics = extract_project(self.project)
         self._extraction_diagnostics = diagnostics
         self._python_files = sorted({u.file_path for u in units if u.language == "python"})

@@ -17,7 +17,7 @@ from codedupes.semantic_profiles import (
 
 from . import _output
 from ._options import output_width_option
-from ._output import _configured_cli_output
+from ._output import EXIT_RUNTIME_FAILURE, _configured_cli_output
 from ._render import _settings_panel
 
 
@@ -58,7 +58,7 @@ def cache_info_command(output_width: int) -> None:
             _output.error_console.print(
                 f"Cache unavailable: {exc}", style="red", markup=False, highlight=False
             )
-            raise click.exceptions.Exit(1) from exc
+            raise click.exceptions.Exit(EXIT_RUNTIME_FAILURE) from exc
         console.print(_cache_summary_panel(stats))
         if stats["models"]:
             console.print(
@@ -119,7 +119,7 @@ def cache_clear_command(model: str | None, output_width: int) -> None:
             clear_result = cli_module.EmbeddingCache().clear(model=canonical_model)
         except Exception as exc:
             error_console.print(Text(f"Cache clear failed: {exc}", style="red"))
-            raise click.exceptions.Exit(1) from exc
+            raise click.exceptions.Exit(EXIT_RUNTIME_FAILURE) from exc
         if clear_result.failed_deletions:
             error_console.print(
                 Text(
@@ -128,7 +128,7 @@ def cache_clear_command(model: str | None, output_width: int) -> None:
                     style="red",
                 )
             )
-            raise click.exceptions.Exit(1)
+            raise click.exceptions.Exit(EXIT_RUNTIME_FAILURE)
         if model:
             console.print(
                 Text(

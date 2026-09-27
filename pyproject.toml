@@ -34,7 +34,7 @@ dependencies = [
 dev = ["build>=1.2", "packaging>=24.0", "pytest>=8", "ruff>=0.12"]
 
 [project.urls]
-Homepage = "https://github.com/pszemraj/codedupes.git"
+Homepage = "https://github.com/pszemraj/codedupes"
 Repository = "https://github.com/pszemraj/codedupes.git"
 
 [project.scripts]

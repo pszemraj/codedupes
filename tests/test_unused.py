@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import ast
 import logging
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 from textwrap import dedent
 
@@ -17,6 +20,8 @@ from codedupes.unused import (
     find_potentially_unused,
 )
 from tests.conftest import extract_units
+
+requires_git = pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
 
 
 def _unit(units: list[CodeUnit], qualified_name: str) -> CodeUnit:
@@ -121,17 +126,122 @@ def test_public_function_is_skipped_by_default(tmp_path: Path) -> None:
     assert "_private_function" in names
 
 
-def test_noqa_and_main_block_mark_as_used(tmp_path: Path) -> None:
+def test_public_referenced_only_from_a_filtered_private_definition_is_not_reported(
+    tmp_path: Path,
+) -> None:
+    """A private caller the extractor dropped must still credit what it calls."""
+    source = dedent(
+        """
+        def public():
+            return 1
+
+        def _private_caller():
+            return public()
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=False)
+    build_reference_graph(units)
+
+    assert [unit.name for unit in units] == ["public"]
+    unused = find_potentially_unused(units, strict_unused=True)
+
+    assert "public" not in {unit.name for unit in unused}
+    file_path = units[0].file_path
+    assert _unit(units, "sample.public").references == {
+        f"__definition__::{file_path}::_private_caller::4"
+    }
+
+
+def test_public_method_inside_a_private_class_still_credits_what_it_calls(
+    tmp_path: Path,
+) -> None:
+    """A public method whose private container was dropped still credits its calls."""
+    source = dedent(
+        """
+        def public_helper():
+            return 1
+
+        class _Service:
+            def run(self):
+                return public_helper()
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=False)
+    build_reference_graph(units)
+
+    assert [unit.name for unit in units] == ["public_helper"]
+    unused = find_potentially_unused(units, strict_unused=True)
+
+    assert "public_helper" not in {unit.name for unit in unused}
+
+
+def test_ignore_directive_marks_the_unit_as_used(tmp_path: Path) -> None:
+    source = dedent(
+        """
+        def ignored_unused():  # codedupes: ignore
+            return 42
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    build_reference_graph(units, project_root=tmp_path)
+    unused = find_potentially_unused(units, strict_unused=True)
+
+    assert "ignored_unused" not in {unit.name for unit in unused}
+
+
+def test_noqa_marker_no_longer_suppresses(tmp_path: Path) -> None:
+    """The retired ``noqa: codedupes`` marker no longer suppresses anything."""
     source = dedent(
         """
         def ignored_unused():  # noqa: codedupes
             return 42
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    build_reference_graph(units, project_root=tmp_path)
+    unused = find_potentially_unused(units, strict_unused=True)
 
-        def used_by_main():
-            return 7
+    assert "ignored_unused" in {unit.name for unit in unused}
 
-        if __name__ == "__main__":
-            used_by_main()
+
+def test_directive_in_a_string_or_docstring_does_not_suppress(tmp_path: Path) -> None:
+    """A ``codedupes: ignore`` marker inside a string or docstring is not a directive."""
+    source = dedent(
+        '''
+        def unused_with_docstring():
+            """codedupes: ignore"""
+            return 1
+
+        def unused_with_string():
+            return "codedupes: ignore"
+        '''
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    build_reference_graph(units, project_root=tmp_path)
+    unused = find_potentially_unused(units, strict_unused=True)
+    names = {unit.name for unit in unused}
+
+    assert "unused_with_docstring" in names
+    assert "unused_with_string" in names
+
+
+def test_directive_propagates_down_not_up(tmp_path: Path) -> None:
+    """A directive marks its own unit and everything nested in it, but never its container.
+
+    ``_Service`` is private, so absent its own directive both it and ``run``
+    would be reported (see ``test_public_method_of_private_class_is_reported_by_default``).
+    """
+    source = dedent(
+        """
+        def outer():
+            def inner():  # codedupes: ignore
+                return 1
+
+            return 2
+
+        class _Service:  # codedupes: ignore
+            def run(self):
+                return 1
         """
     ).strip()
     units = extract_units(tmp_path, source, include_private=True)
@@ -139,8 +249,46 @@ def test_noqa_and_main_block_mark_as_used(tmp_path: Path) -> None:
     unused = find_potentially_unused(units, strict_unused=True)
     names = {unit.name for unit in unused}
 
-    assert "ignored_unused" not in names
-    assert "used_by_main" not in names
+    assert "outer" in names
+    assert "inner" not in names
+    assert "_Service" not in names
+    assert "run" not in names
+
+
+def test_ignore_unused_alone_leaves_duplicates_reported(tmp_path: Path) -> None:
+    """``codedupes: ignore[unused]`` suppresses only the unused finding, not duplicates."""
+    source = dedent(
+        """
+        def unused_helper():  # codedupes: ignore[unused]
+            return 1
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    build_reference_graph(units, project_root=tmp_path)
+    unused = find_potentially_unused(units, strict_unused=True)
+
+    assert "unused_helper" not in {unit.name for unit in unused}
+    assert _unit(units, "sample.unused_helper").suppressions == frozenset({"unused"})
+
+
+def test_suppressed_unused_counts_only_would_be_findings(tmp_path: Path) -> None:
+    """``run_unused_analysis`` counts only directive-suppressed units that would else be findings."""
+    source = dedent(
+        """
+        def public_exempt():  # codedupes: ignore
+            return 1
+
+        def _private_unused():  # codedupes: ignore
+            return 2
+        """
+    ).strip()
+    units = extract_units(tmp_path, source, include_private=True)
+    report = unused_module.run_unused_analysis(units, project_root=tmp_path, strict_unused=False)
+
+    # public_exempt would not be a finding even absent the directive (public
+    # surface exemption under the default, non-strict policy), so it must not
+    # be counted as suppressed; only _private_unused would-be-reported.
+    assert report.suppressed == 1
 
 
 def test_main_block_references_survive_a_bom(tmp_path: Path) -> None:
@@ -232,6 +380,275 @@ def test_pyproject_entry_point_groups_mark_as_used(tmp_path: Path) -> None:
     assert {unit.name for unit in unused} == {"helper"}
 
 
+_ENTRY_POINT_ANALYZER_CONFIG = AnalyzerConfig(
+    run_traditional=False, run_semantic=False, run_unused=True, strict_unused=True
+)
+
+
+def _entry_point_project(tmp_path: Path) -> Path:
+    """Write a project whose pyproject.toml names entry points inside a src package.
+
+    :param tmp_path: Test directory.
+    :return: Project root, containing ``pyproject.toml`` and ``src/pkg/``.
+    """
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "pyproject.toml").write_text(
+        dedent(
+            """
+            [project]
+            name = "proj"
+            version = "0.1"
+
+            [project.scripts]
+            app = "pkg.cli:_main"
+            cls = "pkg.cli:App.run"
+            """
+        ).strip()
+        + "\n"
+    )
+    pkg = root / "src" / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "cli.py").write_text(
+        dedent(
+            """
+            def _main():
+                return 1
+
+
+            class App:
+                def run(self):
+                    return 2
+            """
+        ).strip()
+        + "\n"
+    )
+    (pkg / "other.py").write_text(
+        dedent(
+            """
+            def _main():
+                return 3
+            """
+        ).strip()
+        + "\n"
+    )
+    return root
+
+
+def test_entry_points_credit_only_the_named_module(tmp_path: Path) -> None:
+    """Only the named module receives entry-point credit, even with matching basenames."""
+    root = _entry_point_project(tmp_path)
+    cli = root / "src" / "pkg" / "cli.py"
+    cli.write_text(
+        cli.read_text()
+        + dedent(
+            """
+
+            def factory():
+                def _main():
+                    return 4
+                return 5
+
+
+            class Outer:
+                class App:
+                    def run(self):
+                        return 6
+            """
+        )
+    )
+    other_pkg = root / "src" / "other"
+    other_pkg.mkdir()
+    (other_pkg / "__init__.py").write_text("def _main():\n    return 0\n")
+    (other_pkg / "cli.py").write_text(
+        "def _main():\n    return 0\n\nclass App:\n    def run(self):\n        return 0\n"
+    )
+    analyzer = CodeAnalyzer(_ENTRY_POINT_ANALYZER_CONFIG)
+
+    result = analyzer.analyze(root)
+
+    unused_by_file = {
+        (unit.file_path.relative_to(root).as_posix(), unit.name)
+        for unit in result.potentially_unused
+    }
+    unused_qualified = {unit.qualified_name for unit in result.potentially_unused}
+    # The object path must match exactly, not as a suffix of a nested definition.
+    assert "src.pkg.cli.factory._main" in unused_qualified
+    assert "src.pkg.cli.Outer.App.run" in unused_qualified
+    assert ("src/pkg/other.py", "_main") in unused_by_file
+    assert "src.pkg.cli._main" not in unused_qualified
+    assert "src.pkg.cli.App.run" not in unused_qualified
+    assert ("src/other/cli.py", "_main") in unused_by_file
+    assert ("src/other/cli.py", "run") in unused_by_file
+    assert ("src/other/__init__.py", "_main") in unused_by_file
+
+
+@pytest.mark.parametrize(
+    ("files", "scan_root", "reported"),
+    [
+        pytest.param(
+            ("src/pkg/cli.py", "examples/pkg/cli.py"),
+            ".",
+            {"examples/pkg/cli.py"},
+            id="src-layout",
+        ),
+        pytest.param(
+            ("pkg/cli.py", "examples/pkg/cli.py"),
+            ".",
+            {"examples/pkg/cli.py"},
+            id="flat-layout",
+        ),
+        pytest.param(
+            ("src/pkg/cli.py", "examples/pkg/cli.py"),
+            "examples",
+            {"examples/pkg/cli.py"},
+            id="package-outside-the-scan",
+        ),
+        pytest.param(("python/pkg/cli.py",), ".", set(), id="other-source-root"),
+    ],
+)
+def test_entry_point_module_resolves_from_the_project_layout(
+    tmp_path: Path, files: tuple[str, ...], scan_root: str, reported: set[str]
+) -> None:
+    """``pkg.cli:main`` names ``src/pkg/cli.py`` or ``pkg/cli.py``, not every file ending in ``pkg/cli.py``."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "proj"\nversion = "0.1"\n\n[project.scripts]\napp = "pkg.cli:main"\n'
+    )
+    for relative in files:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def main():\n    return 1\n")
+    analyzer = CodeAnalyzer(_ENTRY_POINT_ANALYZER_CONFIG)
+
+    result = analyzer.analyze(root / scan_root)
+
+    assert {
+        unit.file_path.relative_to(root).as_posix() for unit in result.potentially_unused
+    } == reported
+
+
+@pytest.mark.parametrize(
+    "levels_above",
+    [
+        pytest.param(("src",), id="one-level-above-scan-root"),
+        pytest.param(("src", "pkg"), id="two-levels-above-scan-root"),
+    ],
+)
+def test_entry_points_resolve_above_the_scan_root(
+    tmp_path: Path, levels_above: tuple[str, ...]
+) -> None:
+    """``pyproject.toml`` one or two levels above the scan root is still found."""
+    root = _entry_point_project(tmp_path)
+    analyzer = CodeAnalyzer(_ENTRY_POINT_ANALYZER_CONFIG)
+
+    result = analyzer.analyze(root.joinpath(*levels_above))
+
+    unused_by_file = {(unit.file_path.name, unit.name) for unit in result.potentially_unused}
+    assert ("other.py", "_main") in unused_by_file
+    assert ("cli.py", "_main") not in unused_by_file
+
+
+def test_entry_points_resolve_for_a_single_file_scan(tmp_path: Path) -> None:
+    """A single-file target resolves the project root from the file's directory."""
+    root = _entry_point_project(tmp_path)
+    analyzer = CodeAnalyzer(_ENTRY_POINT_ANALYZER_CONFIG)
+
+    result = analyzer.analyze(root / "src" / "pkg" / "cli.py")
+
+    assert {unit.name for unit in result.potentially_unused} == set()
+
+
+@pytest.mark.parametrize("scan_root", [".", "src", "src/pkg"])
+def test_entry_point_in_a_package_init_resolves_from_any_scan_root(
+    tmp_path: Path, scan_root: str
+) -> None:
+    """``pkg:_main`` names the ``pkg/__init__.py`` definition whatever its qualified name."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "pyproject.toml").write_text(
+        dedent(
+            """
+            [project]
+            name = "proj"
+            version = "0.1"
+
+            [project.scripts]
+            app = "pkg:_main"
+            """
+        ).strip()
+        + "\n"
+    )
+    pkg = root / "src" / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("def _main():\n    return 1\n")
+    analyzer = CodeAnalyzer(_ENTRY_POINT_ANALYZER_CONFIG)
+
+    result = analyzer.analyze(root / scan_root)
+
+    assert {unit.name for unit in result.potentially_unused} == set()
+
+
+@requires_git
+def test_pyproject_above_the_git_root_is_ignored(tmp_path: Path) -> None:
+    """A ``pyproject.toml`` outside the git work tree is not treated as the project root."""
+    (tmp_path / "pyproject.toml").write_text(
+        dedent(
+            """
+            [project]
+            name = "outer"
+            version = "0.1"
+
+            [project.scripts]
+            app = "pkg.cli:_main"
+            """
+        ).strip()
+        + "\n"
+    )
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    pkg = root / "src" / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "cli.py").write_text("def _main():\n    return 1\n")
+    analyzer = CodeAnalyzer(_ENTRY_POINT_ANALYZER_CONFIG)
+
+    result = analyzer.analyze(root / "src")
+
+    assert {unit.name for unit in result.potentially_unused} == {"_main"}
+
+
+def test_entry_point_without_an_object_credits_nothing(tmp_path: Path) -> None:
+    """A malformed target with no ``:`` separator is skipped, not credited by last segment."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "pyproject.toml").write_text(
+        dedent(
+            """
+            [project]
+            name = "proj"
+            version = "0.1"
+
+            [project.scripts]
+            app = "pkg.cli.run"
+            """
+        ).strip()
+        + "\n"
+    )
+    pkg = root / "src" / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "cli.py").write_text("def run():\n    return 1\n")
+    analyzer = CodeAnalyzer(_ENTRY_POINT_ANALYZER_CONFIG)
+
+    result = analyzer.analyze(root)
+
+    assert {unit.name for unit in result.potentially_unused} == {"run"}
+
+
 def test_reference_graph_parses_each_file_once(tmp_path: Path, monkeypatch) -> None:
     source = dedent(
         """
@@ -264,50 +681,60 @@ def test_reference_graph_parses_each_file_once(tmp_path: Path, monkeypatch) -> N
     }
 
 
-def test_property_read_is_a_reference(tmp_path: Path) -> None:
-    source = dedent(
-        """
-        class _Config:
-            @property
-            def width(self):
-                return 1
+@pytest.mark.parametrize(
+    ("source", "target", "referrer"),
+    [
+        pytest.param(
+            """
+            class _Config:
+                @property
+                def width(self):
+                    return 1
 
-        def _measure(config):
-            return config.width
-        """
-    ).strip()
-    units, unused = _referenced_graph(tmp_path, source)
+            def _measure(config):
+                return config.width
+            """,
+            "_Config.width",
+            "_measure",
+            id="property-read",
+        ),
+        pytest.param(
+            """
+            import shutil
 
-    assert "width" not in unused
-    assert _unit(units, "sample._Config.width").references == {_unit(units, "sample._measure").uid}
+            class _Cleaner:
+                def _on_error(self, func, path, exc_info):
+                    pass
 
+                def run(self, path):
+                    shutil.rmtree(path, onerror=self._on_error)
+            """,
+            "_Cleaner._on_error",
+            "_Cleaner.run",
+            id="bound-method-callback",
+        ),
+    ],
+)
+def test_attribute_access_is_a_reference(
+    tmp_path: Path, source: str, target: str, referrer: str
+) -> None:
+    """A property read or a bound-method callback credits the definition it names.
 
-def test_bound_method_callback_is_a_reference(tmp_path: Path) -> None:
-    source = dedent(
-        """
-        import shutil
+    The credit comes from the definition the access occurs in: a method body is
+    attributed to the method, not to its class.
+    """
+    units, unused = _referenced_graph(tmp_path, dedent(source).strip())
 
-        class _Cleaner:
-            def _on_error(self, func, path, exc_info):
-                pass
-
-            def run(self, path):
-                shutil.rmtree(path, onerror=self._on_error)
-        """
-    ).strip()
-    units, unused = _referenced_graph(tmp_path, source)
-
-    assert "_on_error" not in unused
-    # The method body is attributed to the method and to its class.
-    assert _unit(units, "sample._Cleaner._on_error").references == {
-        _unit(units, "sample._Cleaner.run").uid,
-        _unit(units, "sample._Cleaner").uid,
-    }
+    assert target.rsplit(".", 1)[-1] not in unused
+    assert _unit(units, f"sample.{target}").references == {_unit(units, f"sample.{referrer}").uid}
 
 
 def test_annotations_are_references(tmp_path: Path) -> None:
     source = dedent(
         """
+        import typing
+        from typing import TypeAlias, TypeVar, cast
+
         class _Node:
             pass
 
@@ -317,9 +744,47 @@ def test_annotations_are_references(tmp_path: Path) -> None:
         class _Edge:
             pass
 
-        def _walk(node: _Node, edges: "list[_Edge]") -> "_Leaf | None":
+        class _Aliased:
+            pass
+
+        class _Bound:
+            pass
+
+        class _Cast:
+            pass
+
+        class _KeywordCast:
+            pass
+
+        class _QualifiedCast:
+            pass
+
+        def _field_name():
+            return 1
+
+        _Alias: TypeAlias = "list[_Aliased]"
+        _T = TypeVar("_T", bound="_Bound")
+
+        class _LocalCast:
+            pass
+
+        def _walk(node: _Node, edges: "list[_Edge]", converter) -> "_Leaf | None":
+            from typing import cast as local_cast
+
             found: "_Leaf | None" = None
-            return found
+            local_cast("_LocalCast", found)
+            converter.cast("_field_name")
+            typing.cast("_QualifiedCast", found)
+            cast(typ="_KeywordCast", val=found)
+            return cast("_Cast", found)
+
+        def _format_name():
+            return 2
+
+        def _render(value):
+            from mylib import local_cast
+
+            return local_cast("_format_name", value)
         """
     ).strip()
     units, unused = _referenced_graph(tmp_path, source)
@@ -327,11 +792,30 @@ def test_annotations_are_references(tmp_path: Path) -> None:
     walker = _unit(units, "sample._walk").uid
     module = _module_ref(units)
     # Signature annotations evaluate in the enclosing (module) namespace; the
-    # annotated assignment inside the body belongs to the function.
+    # annotated assignment inside the body belongs to the function. An explicit
+    # TypeAlias value, a TypeVar bound, and a typing.cast target (positional,
+    # keyword, or module-qualified) are type expressions, so their quoted
+    # forward references count like annotations; another API's cast takes data,
+    # even under a name a sibling function imports from typing.
     assert _unit(units, "sample._Node").references == {module}
     assert _unit(units, "sample._Edge").references == {module}
     assert _unit(units, "sample._Leaf").references == {module, walker}
-    assert unused == {"_walk"}
+    assert _unit(units, "sample._Aliased").references == {module}
+    assert _unit(units, "sample._Bound").references == {module}
+    assert _unit(units, "sample._Cast").references == {walker}
+    assert _unit(units, "sample._KeywordCast").references == {walker}
+    assert _unit(units, "sample._QualifiedCast").references == {walker}
+    assert _unit(units, "sample._LocalCast").references == {walker}
+    assert unused == {"_walk", "_field_name", "_format_name", "_render"}
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="type statements need Python 3.12")
+def test_type_statement_value_is_a_type_expression(tmp_path: Path) -> None:
+    source = 'class _Target:\n    pass\n\ntype Alias = "list[_Target]"\n'
+    units, unused = _referenced_graph(tmp_path, source)
+
+    assert _unit(units, "sample._Target").references == {_module_ref(units)}
+    assert unused == set()
 
 
 def test_base_class_is_a_reference(tmp_path: Path) -> None:
@@ -408,6 +892,80 @@ def test_self_recursion_is_not_a_reference(tmp_path: Path) -> None:
     assert unused == {"_factorial"}
 
 
+_CYCLE = (
+    "def _even(n):\n    return n == 0 or _odd(n - 1)\n\n"
+    "def _odd(n):\n    return n != 0 and _even(n - 1)\n\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("source", "strict", "expected"),
+    [
+        pytest.param(_CYCLE, True, {"_even", "_odd"}, id="closed-pair"),
+        pytest.param(
+            _CYCLE + "def run():\n    return _even(4)\n", True, {"run"}, id="entered-from-outside"
+        ),
+        pytest.param(
+            "def _a():\n    return _b() + _leaf()\n\ndef _b():\n    return _a()\n\n"
+            "def _leaf():\n    return 1\n",
+            True,
+            {"_a", "_b"},
+            id="callee-of-a-dead-cycle-keeps-its-credit",
+        ),
+        pytest.param(
+            "def _a():  # codedupes: ignore[unused]\n    return _b()\n\n"
+            "def _b():\n    return _a()\n",
+            True,
+            set(),
+            id="directive-keeps-the-cycle",
+        ),
+        pytest.param(
+            "def helper():\n    return _b()\n\ndef _b():\n    return helper()\n",
+            False,
+            set(),
+            id="public-member-keeps-the-cycle-in-default-mode",
+        ),
+        pytest.param(
+            "def _a():\n    return _b()\n\ndef _b():\n    return _c()\n\n"
+            "def _c():\n    return _a()\n",
+            True,
+            {"_a", "_b", "_c"},
+            id="three-cycle",
+        ),
+        pytest.param(
+            "class C:\n    def _a(self):\n        return self._b()\n\n"
+            "    def _b(self):\n        return self._a()\n\nC()\n",
+            True,
+            {"_a", "_b"},
+            id="private-methods-of-a-used-class",
+        ),
+        pytest.param(
+            "def outer(n):\n    def _p(x):\n        return _q(x)\n\n"
+            "    def _q(x):\n        return _p(x)\n\n    return n\n\nouter(3)\n",
+            True,
+            {"_p", "_q"},
+            id="nested-functions-of-a-used-function",
+        ),
+        pytest.param(
+            "class C:\n    def run(self):\n        return self._a()\n\n"
+            "    def _a(self):\n        return self._b()\n\n"
+            "    def _b(self):\n        return self._a()\n\nC().run()\n",
+            True,
+            set(),
+            id="method-cycle-entered-from-a-live-method",
+        ),
+    ],
+)
+def test_closed_reference_cycle_is_unreferenced(
+    tmp_path: Path, source: str, strict: bool, expected: set[str]
+) -> None:
+    """Mutual recursion nothing outside reaches is reported, like self-recursion."""
+    units = extract_units(tmp_path, source, include_private=True)
+    build_reference_graph(units)
+
+    assert {unit.name for unit in find_potentially_unused(units, strict_unused=strict)} == expected
+
+
 def test_self_recursive_method_is_not_a_reference(tmp_path: Path) -> None:
     """A method's own body must not reach it through the enclosing class scope."""
     source = dedent(
@@ -442,7 +1000,9 @@ def test_decorator_and_default_argument_names_are_references(tmp_path: Path) -> 
     # Decorators and defaults evaluate in the enclosing (module) namespace.
     assert _unit(units, "sample._decorate").references == {_module_ref(units)}
     assert _unit(units, "sample._default").references == {_module_ref(units)}
-    assert unused == {"run"}
+    # A project decorator may register what it wraps, so ``run`` counts as reached.
+    assert _unit(units, "sample.run").references == {"decorator::_decorate"}
+    assert unused == set()
 
 
 def test_class_body_alias_is_a_reference(tmp_path: Path) -> None:
@@ -461,7 +1021,69 @@ def test_class_body_alias_is_a_reference(tmp_path: Path) -> None:
     assert unused == {"_Visitor"}
 
 
-def test_nested_definition_references_count_for_the_enclosing_unit(tmp_path: Path) -> None:
+@pytest.mark.parametrize("module_homonym", [False, True])
+@pytest.mark.parametrize("strict", [False, True])
+def test_class_body_alias_of_a_method_credits_the_method(
+    tmp_path: Path, module_homonym: bool, strict: bool
+) -> None:
+    """A class-body load sees the class's own definitions before the module's."""
+    homonym = "def _parse(text):\n    return int(text)\n\n" if module_homonym else ""
+    source = (
+        f"{homonym}"
+        "class Decoder:\n"
+        "    def _parse(self, text):\n        return text[::-1]\n"
+        "    parse = _parse\n"
+    )
+    units = extract_units(tmp_path, source, include_private=True)
+    build_reference_graph(units)
+    unused = {unit.qualified_name for unit in find_potentially_unused(units, strict_unused=strict)}
+
+    decoder = _unit(units, "sample.Decoder")
+    assert decoder.uid in _unit(units, "sample.Decoder._parse").references
+    assert "sample.Decoder._parse" not in unused
+    if module_homonym:
+        # Statement order is ignored, so the module function stays a candidate.
+        assert decoder.uid in _unit(units, "sample._parse").references
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            "def _helper():\n    return 'old'\n"
+            "def _replace():\n"
+            "    global _helper\n"
+            "    def _helper():\n        return 'new'\n"
+            "def run():\n"
+            "    _replace()\n"
+            "    return _helper()\n",
+            id="global",
+        ),
+        pytest.param(
+            "def outer():\n"
+            "    def _helper():\n        return 'old'\n"
+            "    def _replace():\n"
+            "        nonlocal _helper\n"
+            "        def _helper():\n            return 'new'\n"
+            "    _replace()\n"
+            "    return _helper()\n",
+            id="nonlocal",
+        ),
+    ],
+)
+def test_definitions_rebound_through_global_or_nonlocal_are_references(
+    tmp_path: Path, source: str
+) -> None:
+    """A ``def`` under ``global``/``nonlocal`` binds outside its lexical parent, so every
+    same-named definition stays a candidate for loads of that name."""
+    units, unused = _referenced_graph(tmp_path, source)
+
+    assert [unit for unit in units if unit.name == "_helper"]
+    assert all(unit.references for unit in units if unit.name == "_helper")
+    assert "_helper" not in unused
+
+
+def test_nested_definition_references_belong_to_the_nested_unit(tmp_path: Path) -> None:
     source = dedent(
         """
         def _helper():
@@ -478,7 +1100,7 @@ def test_nested_definition_references_count_for_the_enclosing_unit(tmp_path: Pat
 
     outer = _unit(units, "sample._outer")
     inner = _unit(units, "sample._outer._inner")
-    assert _unit(units, "sample._helper").references == {outer.uid, inner.uid}
+    assert _unit(units, "sample._helper").references == {inner.uid}
     assert inner.references == {outer.uid}
     assert unused == {"_outer"}
 
@@ -509,7 +1131,8 @@ def test_decorated_definition_references_are_attributed_to_its_unit(tmp_path: Pa
     assert definitions["_target"] == (7, 8)
     assert target.lineno == 7
     assert _unit(units, "sample._helper").references == {target.uid}
-    assert unused == {"_target"}
+    assert target.references == {"decorator::_decorate"}
+    assert unused == set()
 
 
 def test_callback_passed_as_a_value_is_a_reference(tmp_path: Path) -> None:
@@ -734,6 +1357,119 @@ def test_framework_rule_resolves_bases_through_module_aliases(tmp_path: Path) ->
     assert unused == {"_FromAlias", "dead_public", "_Via", "also_dead"}
 
 
+@pytest.mark.parametrize("container", ["def factory():", "class _Container:"])
+def test_framework_rule_resolves_bases_through_enclosing_imports(
+    tmp_path: Path, container: str
+) -> None:
+    """An imported project base stays local to the project inside a function or class."""
+    _root, units, unused = _package_graph(
+        tmp_path,
+        {
+            "mod.py": "class _Props:\n    pass\n",
+            "other.py": (
+                f"{container}\n"
+                "    from .mod import _Props as _Base\n"
+                "    class _Derived(_Base):\n"
+                "        def dead_public(self):\n"
+                "            return 1\n"
+            ),
+        },
+    )
+
+    method = next(unit for unit in units if unit.name == "dead_public")
+    assert method.references == set()
+    assert "dead_public" in unused
+
+
+def test_registration_decorators_reach_the_definition_and_wrappers_do_not(tmp_path: Path) -> None:
+    """Any decorator but a standard-library wrapper may register what it decorates."""
+    source = dedent(
+        """
+        import functools
+        import functools as ft
+        from contextlib import contextmanager
+
+        from django.dispatch import receiver
+        from flask import Flask
+
+        app = Flask(__name__)
+
+        @app.route("/")
+        def index():
+            return "hi"
+
+        @receiver("post_save")
+        def on_saved(sender):
+            return sender
+
+        @functools.lru_cache
+        def dead_cached():
+            return 1
+
+        @ft.cache
+        def dead_aliased():
+            return 2
+
+        @contextmanager
+        def dead_context():
+            yield
+
+        class Settings:
+            @staticmethod
+            def dead_static():
+                return 3
+        """
+    ).strip()
+    units, unused = _referenced_graph(tmp_path, source)
+
+    assert _unit(units, "sample.index").references == {"decorator::app.route"}
+    assert _unit(units, "sample.on_saved").references == {"decorator::receiver"}
+    assert unused == {"dead_cached", "dead_aliased", "dead_context", "dead_static"}
+
+
+def test_wrapper_decorators_resolve_imports_visible_at_the_definition(tmp_path: Path) -> None:
+    """Wrapper imports in compound, enclosing-function, and class scopes do not register code."""
+    source = dedent(
+        """
+        try:
+            from functools import cache as module_cache
+        except ImportError:
+            from functools import cache as module_cache
+
+        @module_cache
+        def _module_cached():
+            return 1
+
+        def _outer():
+            from functools import lru_cache as function_cache
+
+            @function_cache
+            def _nested_cached():
+                return 1
+
+        class _Settings:
+            from functools import cached_property as class_cached_property
+
+            @class_cached_property
+            def _value(self):
+                return 1
+        """
+    ).strip()
+    units, unused = _referenced_graph(tmp_path, source)
+
+    assert _unit(units, "sample._module_cached").references == set()
+    assert _unit(units, "sample._outer._nested_cached").references == set()
+    assert _unit(units, "sample._Settings._value").references == set()
+    assert unused == {"_module_cached", "_outer", "_nested_cached", "_Settings", "_value"}
+
+
+def test_pytest_hooks_are_exempt_outside_conftest(tmp_path: Path) -> None:
+    source = "def pytest_addoption(parser):\n    parser.addoption('--x')\n\n\ndef dead():\n    return 1\n"
+    _units, unused = _referenced_graph(tmp_path, source)
+
+    assert unused == {"dead"}
+
+
 def test_literal_annotation_values_are_not_references(tmp_path: Path) -> None:
     """``Literal["run"]`` names a value, not the unit ``run``; other subscripts still count."""
     source = dedent(
@@ -802,6 +1538,520 @@ def test_analyzer_hands_every_visited_python_file_to_the_unused_analysis(
     assert [unit.name for unit in result.potentially_unused] == ["_dead"]
 
 
+def test_production_function_referenced_only_from_tests_is_not_reported(tmp_path: Path) -> None:
+    """A production function called only from a default-excluded test file is not unused.
+
+    ``test_impl.py`` is a reference-only file: it is never extracted into a
+    ``CodeUnit``, so crediting ``helper`` depends on the definition-to-referrer
+    fallback for a referrer with no matching unit (see A1).
+    """
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "__init__.py").write_text("")
+    (root / "impl.py").write_text("def helper():\n    return 1\n")
+    tests_dir = root / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_impl.py").write_text(
+        "from pkg.impl import helper\n\n\ndef test_helper():\n    assert helper() == 1\n"
+    )
+
+    def unused_names(**config_overrides: object) -> set[str]:
+        config = AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=False,
+            run_unused=True,
+            strict_unused=True,
+            **config_overrides,
+        )
+        result = CodeAnalyzer(config).analyze(root)
+        return {unit.name for unit in result.potentially_unused}
+
+    # Defaults alone: the test file is reference-only, so it still credits helper.
+    assert "helper" not in unused_names()
+
+    # A user exclusion for "tests/" is a hard exclusion, whatever its glob shape
+    # or whether the default test-file shapes are also active: it cannot hide
+    # an otherwise-unused helper by keeping the excluded test's reference to it
+    # visible to the unused-code reference walk.
+    assert "helper" in unused_names(exclude_patterns=["**/tests/**"])
+    assert "helper" in unused_names(exclude_patterns=["tests/"])
+    assert "helper" in unused_names(default_excludes=False, exclude_patterns=["**/tests/**"])
+
+
+@pytest.mark.parametrize(
+    "test_body",
+    [
+        "def _loop():\n    return _loop() + impl.helper()\n",
+        (
+            "def outer():\n"
+            "    def _loop():\n"
+            "        return _loop()\n"
+            "    return _loop() + impl.helper()\n"
+        ),
+        (
+            "def outer():\n"
+            "    def branch():\n"
+            "        def _loop():\n"
+            "            return 1\n"
+            "        return _loop()\n"
+            "    return branch() + impl.helper()\n"
+        ),
+    ],
+)
+def test_excluded_definition_recursion_does_not_credit_production_names(
+    tmp_path: Path,
+    test_body: str,
+) -> None:
+    """A reference-only definition credits its calls, but not its own name."""
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "__init__.py").write_text("")
+    (root / "impl.py").write_text("def _loop():\n    return 1\n\n\ndef helper():\n    return 2\n")
+    tests_dir = root / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_impl.py").write_text("import pkg.impl as impl\n\n\n" + test_body)
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=False,
+            run_unused=True,
+            strict_unused=True,
+        )
+    ).analyze(root)
+
+    assert [unit.name for unit in result.potentially_unused] == ["_loop"]
+
+
+@pytest.mark.parametrize(
+    ("production", "test_body"),
+    [
+        pytest.param(
+            "def helper():\n    return 1\n",
+            (
+                "from pkg.impl import *\n\nclass Test:\n"
+                "    def helper(self):\n        return helper()\n"
+            ),
+            id="method-homonym-is-not-in-scope",
+        ),
+        pytest.param(
+            "def helper():\n    return 1\n",
+            (
+                "from pkg.impl import *\n\nclass Test:\n"
+                "    def helper():\n        return 0\n    value = helper()\n"
+            ),
+            id="class-body-falls-back-to-name-matching",
+        ),
+        pytest.param(
+            "class Obj:\n    def helper(self):\n        return 1\n",
+            (
+                "from pkg.impl import Obj\n\ndef test_call():\n"
+                "    def helper():\n        return 0\n"
+                "    return Obj().helper()\n"
+            ),
+            id="attribute-load-is-name-matched",
+        ),
+    ],
+)
+def test_class_scopes_and_attribute_loads_do_not_shadow_production_names(
+    tmp_path: Path, production: str, test_body: str
+) -> None:
+    """Only enclosing function scopes and the module top level shadow a bare name."""
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "__init__.py").write_text("")
+    (root / "impl.py").write_text(production)
+    tests_dir = root / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_impl.py").write_text(test_body)
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False,
+            run_semantic=False,
+            run_unused=True,
+            strict_unused=True,
+        )
+    ).analyze(root)
+
+    assert "helper" not in {unit.name for unit in result.potentially_unused}
+
+
+@pytest.mark.parametrize("sibling_call", [False, True])
+def test_filtered_nested_bindings_do_not_mask_sibling_references(
+    tmp_path: Path, sibling_call: bool
+) -> None:
+    """A nested binding shadows its own loads, not loads in sibling scopes."""
+    sibling = "    def _sibling():\n        return helper()\n" if sibling_call else ""
+    source = (
+        "def helper():\n    return 1\n\n"
+        "def public():\n"
+        "    def _branch():\n"
+        "        def helper():\n            return 2\n"
+        "        return helper()\n"
+        f"{sibling}"
+        "    return _branch()\n"
+    )
+    units = extract_units(tmp_path, source, include_private=False)
+    build_reference_graph(units)
+
+    assert bool(_unit(units, "sample.helper").references) is sibling_call
+
+
+@pytest.mark.parametrize(
+    ("signature", "body", "credited"),
+    [
+        pytest.param("_helper", "    return _helper()\n", False, id="positional"),
+        pytest.param("*, _helper", "    return _helper()\n", False, id="keyword-only"),
+        pytest.param("*_helper", "    return _helper[0]()\n", False, id="var-positional"),
+        pytest.param(
+            "_helper",
+            "    def inner():\n        return _helper()\n    return inner()\n",
+            False,
+            id="closure-over-the-parameter",
+        ),
+        pytest.param("callback=_helper", "    return callback()\n", True, id="default-value"),
+    ],
+)
+def test_parameter_shadows_a_same_named_module_definition(
+    tmp_path: Path, signature: str, body: str, credited: bool
+) -> None:
+    """A load of a parameter's name is the parameter, but a default evaluates outside the function."""
+    source = f"def _helper():\n    return 1\n\n\ndef run({signature}):\n{body}"
+    _units, unused = _referenced_graph(tmp_path, source)
+
+    assert ("_helper" not in unused) is credited
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param("    _helper = values[0]\n    return _helper\n", id="assignment"),
+        pytest.param(
+            "    for _helper in values:\n        return _helper\n    return None\n", id="for-target"
+        ),
+        pytest.param("    return [_helper for _helper in values]\n", id="comprehension-target"),
+        pytest.param("    return (lambda _helper: _helper)(values[0])\n", id="lambda-parameter"),
+        pytest.param(
+            "    with open(path) as _helper:\n        return _helper.read()\n", id="with-target"
+        ),
+        pytest.param(
+            "    try:\n        raise ValueError()\n    except ValueError as _helper:\n        return _helper\n",
+            id="except-target",
+        ),
+        pytest.param("    from math import pi as _helper\n    return _helper\n", id="import-alias"),
+        pytest.param(
+            "    first = (_helper := values[0])\n    return _helper + first\n", id="walrus"
+        ),
+    ],
+)
+def test_local_bindings_do_not_credit_a_same_named_module_definition(
+    tmp_path: Path, body: str
+) -> None:
+    """A load of any local binding does not keep a same-named module function alive."""
+    source = f"def _helper():\n    return 1\n\n\ndef caller(values, path):\n{body}"
+    units, unused = _referenced_graph(tmp_path, source)
+
+    helper = _unit(units, "sample._helper")
+    assert helper.references == set()
+    assert "_helper" in unused
+
+
+def test_comprehension_targets_do_not_shadow_the_first_iterable(tmp_path: Path) -> None:
+    """The first iterable still resolves before a comprehension binds its targets."""
+    source = "def _helper():\n    return [1]\n\n\ndef caller():\n    return [_helper for _helper in _helper()]\n"
+    units, unused = _referenced_graph(tmp_path, source)
+
+    helper = _unit(units, "sample._helper")
+    assert helper.references == {_unit(units, "sample.caller").uid}
+    assert "_helper" not in unused
+
+
+def test_comprehension_targets_shadow_later_iterables(tmp_path: Path) -> None:
+    """Every target is local after the first iterable, including before it is assigned."""
+    source = (
+        "def _helper():\n    return [1]\n\n\ndef caller(values):\n"
+        "    return [item for item in values for _helper in _helper()]\n"
+    )
+    units, unused = _referenced_graph(tmp_path, source)
+
+    helper = _unit(units, "sample._helper")
+    assert helper.references == set()
+    assert "_helper" in unused
+
+
+def test_comprehension_targets_do_not_shadow_later_global_loads(tmp_path: Path) -> None:
+    """A comprehension target is local only inside the comprehension itself."""
+    source = (
+        "def _helper():\n    return 1\n\n\ndef caller(values):\n"
+        "    result = [_helper for _helper in values]\n"
+        "    return _helper()\n"
+    )
+    units, unused = _referenced_graph(tmp_path, source)
+
+    helper = _unit(units, "sample._helper")
+    assert helper.references == {_unit(units, "sample.caller").uid}
+    assert "_helper" not in unused
+
+
+def test_comprehension_walrus_binds_the_enclosing_function(tmp_path: Path) -> None:
+    """A comprehension assignment expression binds its containing function, not the child scope."""
+    source = (
+        "def _helper():\n    return 1\n\n\ndef caller(values):\n"
+        "    result = [(_helper := value) for value in values]\n"
+        "    return _helper\n"
+    )
+    units, unused = _referenced_graph(tmp_path, source)
+
+    helper = _unit(units, "sample._helper")
+    assert helper.references == set()
+    assert "_helper" in unused
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param("(lambda _helper: _helper)(1)", id="lambda"),
+        pytest.param("[_helper for _helper in range(1)]", id="comprehension"),
+    ],
+)
+def test_module_child_scope_bindings_do_not_credit_module_definitions(
+    tmp_path: Path, expression: str
+) -> None:
+    """A lambda or comprehension binding is not a module-level reference."""
+    source = f"def _helper():\n    return 1\n\n{expression}\n"
+    units, unused = _referenced_graph(tmp_path, source)
+
+    helper = _unit(units, "sample._helper")
+    assert helper.references == set()
+    assert "_helper" in unused
+
+
+def test_dotted_import_binds_its_package_name(tmp_path: Path) -> None:
+    """``import os.path`` makes ``os`` local, not a same-named module function."""
+    source = (
+        "def os():\n    return 1\n\n\ndef caller():\n"
+        "    import os.path\n"
+        "    return os.path.basename('sample.py')\n"
+    )
+    units, unused = _referenced_graph(tmp_path, source)
+
+    package = _unit(units, "sample.os")
+    assert package.references == set()
+    assert "os" in unused
+
+
+@pytest.mark.parametrize(
+    ("body", "credited"),
+    [
+        pytest.param("        return _helper\n", False, id="closure"),
+        pytest.param("        nonlocal _helper\n        return _helper\n", False, id="nonlocal"),
+        pytest.param("        global _helper\n        return _helper()\n", True, id="global"),
+    ],
+)
+def test_local_bindings_respect_closure_and_global_resolution(
+    tmp_path: Path, body: str, credited: bool
+) -> None:
+    """Closures see enclosing locals, while ``global`` keeps module definitions reachable."""
+    source = (
+        "def _helper():\n    return 1\n\n\ndef outer(value):\n"
+        "    _helper = value\n"
+        "    def inner():\n"
+        f"{body}"
+        "    return inner()\n"
+    )
+    units, unused = _referenced_graph(tmp_path, source)
+
+    helper = _unit(units, "sample._helper")
+    assert bool(helper.references) is credited
+    assert ("_helper" not in unused) is credited
+
+
+def test_local_binding_shadows_a_module_wrapper_import_in_decorator_lookup(tmp_path: Path) -> None:
+    """A local decorator binding is not mistaken for a module-level functools wrapper."""
+    source = dedent(
+        """
+        from functools import cache
+
+        def _register(function):
+            return function
+
+        def outer():
+            cache = _register
+
+            @cache
+            def _decorated():
+                return 1
+        """
+    ).strip()
+    units, _unused = _referenced_graph(tmp_path, source)
+
+    assert _unit(units, "sample.outer._decorated").references == {"decorator::cache"}
+
+
+def test_decorator_alias_lookup_respects_parameters_and_global_declarations(tmp_path: Path) -> None:
+    """A parameter or ``global`` declaration takes precedence over an enclosing wrapper import."""
+    source = dedent(
+        """
+        def cache(function):
+            return function
+
+        def parameter(cache):
+            @cache
+            def _parameter_decorated():
+                return 1
+
+        def outer():
+            from functools import cache
+
+            def inner():
+                global cache
+
+                @cache
+                def _global_decorated():
+                    return 1
+        """
+    ).strip()
+    units, _unused = _referenced_graph(tmp_path, source)
+
+    assert _unit(units, "sample.parameter._parameter_decorated").references == {"decorator::cache"}
+    assert _unit(units, "sample.outer.inner._global_decorated").references == {"decorator::cache"}
+
+
+def test_local_binding_keeps_framework_dispatch_and_global_calls_distinct(tmp_path: Path) -> None:
+    """A method's local does not hide framework credit or an unshadowed helper call."""
+    source = dedent(
+        """
+        import ast
+
+        def node():
+            return 1
+
+        def helper():
+            return 1
+
+        class _Walker(ast.NodeVisitor):
+            def visit_Name(self, ast_node):
+                node = ast_node
+                return node
+
+        def caller():
+            return helper()
+        """
+    ).strip()
+    units, unused = _referenced_graph(tmp_path, source)
+
+    assert _unit(units, "sample.node").references == set()
+    assert _unit(units, "sample._Walker.visit_Name").references == {"framework::ast.NodeVisitor"}
+    assert _unit(units, "sample.helper").references == {_unit(units, "sample.caller").uid}
+    assert "node" in unused
+    assert "helper" not in unused
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(
+            "    if flag:\n        def _helper():\n            return 1\n"
+            "    else:\n        def _helper():\n            return 2\n"
+            "    return _helper()\n",
+            id="conditional-branches",
+        ),
+        pytest.param(
+            "    def _helper(fn):\n        return fn\n"
+            "    @_helper\n    def _helper():\n        return 1\n"
+            "    return _helper()\n",
+            id="decorator-rebinds-the-name",
+        ),
+        pytest.param(
+            "    for step in range(2):\n        if step:\n            _helper()\n"
+            "        def _helper():\n            return 1\n",
+            id="loop-use-before-definition",
+        ),
+    ],
+)
+def test_every_same_named_local_definition_is_a_candidate(tmp_path: Path, body: str) -> None:
+    """Resolution ignores statement order, so no binding the load can reach is reported."""
+    units, _unused = _referenced_graph(tmp_path, f"def outer(flag):\n{body}")
+    outer = _unit(units, "sample.outer")
+    helpers = [unit for unit in units if unit.name == "_helper"]
+
+    assert helpers
+    assert all(outer.uid in helper.references for helper in helpers)
+
+
+def test_global_declaration_bypasses_nested_definition(tmp_path: Path) -> None:
+    """A bare global load credits the module definition, not a nested homonym."""
+    source = (
+        "def _helper():\n    return 1\n"
+        "def outer():\n"
+        "    def _helper():\n        return 2\n"
+        "    def caller():\n"
+        "        global _helper\n"
+        "        return _helper()\n"
+        "    return caller()\n"
+    )
+    units, _unused = _referenced_graph(tmp_path, source)
+    module_helper, nested_helper = sorted(
+        (unit for unit in units if unit.name == "_helper"), key=lambda u: u.lineno
+    )
+
+    assert module_helper.references
+    assert nested_helper.references == set()
+
+
+def test_default_excluded_symlink_directory_does_not_import_external_references(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "test_impl.py").write_text(
+        "from pkg.impl import helper\n\nhelper()\n", encoding="utf-8"
+    )
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "__init__.py").write_text("", encoding="utf-8")
+    (root / "impl.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    (root / "tests").symlink_to(outside, target_is_directory=True)
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(run_traditional=False, run_semantic=False, strict_unused=True)
+    ).analyze(root)
+
+    assert "helper" in {unit.name for unit in result.potentially_unused}
+
+
+@pytest.mark.parametrize("target_name", ["source.py", "test_alias.py", None])
+def test_reference_graph_counts_in_tree_file_symlink_once(tmp_path: Path, target_name: str | None):
+    """A default-excluded alias of a source file is parsed once, as that file.
+
+    Parsed a second time, the alias's ``self._step()`` would credit the real
+    ``_step`` from a definition with no unit of its own; the bare ``_loop()``
+    call resolves inside the alias module and never leaked.
+    """
+    source = tmp_path / "source.py"
+    source.write_text(
+        "def _loop():\n    return _loop()\n\n\n"
+        "class _Worker:\n    def _step(self):\n        return self._step()\n",
+        encoding="utf-8",
+    )
+    alias = tmp_path / "test_alias.py"
+    alias.symlink_to(source)
+    target = tmp_path / target_name if target_name is not None else tmp_path
+
+    result = CodeAnalyzer(
+        AnalyzerConfig(run_traditional=False, run_semantic=False, strict_unused=True)
+    ).analyze(target)
+
+    assert sorted(unit.qualified_name for unit in result.potentially_unused) == [
+        "source._Worker",
+        "source._Worker._step",
+        "source._loop",
+    ]
+    assert all(unit.references == set() for unit in result.potentially_unused)
+    assert result.run.unused.files == 1
+
+
 def test_non_utf8_module_still_contributes_references(tmp_path: Path) -> None:
     """The graph decodes lossily like the extractor instead of dropping the file."""
     path = tmp_path / "legacy.py"
@@ -838,7 +2088,7 @@ def test_module_the_stdlib_parser_rejects_warns_and_contributes_no_references(
     assert [unit.qualified_name for unit in units] == ["sample._intact", "sample._caller"]
 
     with caplog.at_level(logging.WARNING, logger="codedupes.unused"):
-        build_reference_graph(units)
+        diagnostics = build_reference_graph(units)
     unused = find_potentially_unused(units, strict_unused=True)
 
     [record] = [record for record in caplog.records if record.name == "codedupes.unused"]
@@ -846,22 +2096,35 @@ def test_module_the_stdlib_parser_rejects_warns_and_contributes_no_references(
     assert record.getMessage().startswith(
         f"Unused analysis collected no references from {units[0].file_path}: SyntaxError"
     )
+    assert [d.code for d in diagnostics] == ["unused-parse-error"]
+    assert diagnostics[0].lineno == 7
+    assert "SyntaxError" in diagnostics[0].message
     assert _unit(units, "sample._intact").references == set()
     assert {unit.name for unit in unused} == {"_intact", "_caller"}
 
 
-def test_deep_elif_chain_warns_instead_of_aborting_the_analysis(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    """``ast.NodeVisitor`` recurses per node; a generated chain must not crash ``analyze()``."""
-    branches = "\n".join(f"    elif x == {i}:\n        return {i}" for i in range(1, 600))
-    root = tmp_path / "pkg"
-    root.mkdir()
+def _write_elif_chain(root: Path, branch_count: int) -> None:
+    """Write a package with a generated ``elif`` chain and its lone caller.
+
+    :param root: Package directory to write into (must already exist).
+    :param branch_count: Number of generated ``elif`` branches.
+    :return: ``None``.
+    """
+    branches = "\n".join(f"    elif x == {i}:\n        return {i}" for i in range(1, branch_count))
     (root / "__init__.py").write_text("")
     (root / "chain.py").write_text(
         f"def _big(x):\n    if x == 0:\n        return 0\n{branches}\n\n"
         "def _user():\n    return _big(1)\n"
     )
+
+
+def test_deep_elif_chain_is_analyzed_without_a_recursion_bailout(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The raised visitor recursion limit must absorb a few hundred nested branches."""
+    root = tmp_path / "pkg"
+    root.mkdir()
+    _write_elif_chain(root, 600)
     analyzer = CodeAnalyzer(
         AnalyzerConfig(
             run_traditional=False, run_semantic=False, run_unused=True, strict_unused=True
@@ -871,20 +2134,54 @@ def test_deep_elif_chain_warns_instead_of_aborting_the_analysis(
     with caplog.at_level(logging.WARNING, logger="codedupes.unused"):
         result = analyzer.analyze(root)
 
-    [record] = [record for record in caplog.records if record.name == "codedupes.unused"]
-    assert record.getMessage().startswith(
-        f"Unused analysis collected no references from {(root / 'chain.py').resolve()}: "
+    assert [record for record in caplog.records if record.name == "codedupes.unused"] == []
+    assert result.unused_diagnostics == []
+    # _user calls _big, so _big is referenced and drops out; _user stays.
+    assert {unit.name for unit in result.potentially_unused} == {"_user"}
+
+
+def test_visitor_recursion_bailout_is_reported_per_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A chain deeper than even the raised limit becomes a diagnostic, not a crash."""
+    monkeypatch.setattr(unused_module, "_VISIT_RECURSION_LIMIT", 100)
+    root = tmp_path / "pkg"
+    root.mkdir()
+    _write_elif_chain(root, 600)
+    analyzer = CodeAnalyzer(
+        AnalyzerConfig(
+            run_traditional=False, run_semantic=False, run_unused=True, strict_unused=True
+        )
     )
-    assert "recursion" in record.getMessage()
+
+    result = analyzer.analyze(root)
+
+    assert [d.code for d in result.unused_diagnostics] == ["unused-recursion-limit"]
     assert {unit.name for unit in result.potentially_unused} == {"_big", "_user"}
 
 
+def test_parser_stack_overflow_is_a_diagnostic_not_a_crash(tmp_path: Path) -> None:
+    """``ast.parse`` itself overflows its C stack on pathological nesting; survive it."""
+    path = tmp_path / "deep.py"
+    branches = "\n".join(f"    elif x == {i}:\n        return {i}" for i in range(1, 6000))
+    path.write_text(f"def _big(x):\n    if x == 0:\n        return 0\n{branches}\n")
+
+    units = list(CodeExtractor(tmp_path, include_private=True).extract_from_file(path))
+    diagnostics = build_reference_graph(units)
+
+    assert [d.code for d in diagnostics] == ["unused-recursion-limit"]
+
+
 def test_abstractmethod_exemption_reads_only_the_units_own_decorators(tmp_path: Path) -> None:
-    """The decorated method is exempt; its class and a body mentioning the text are not."""
+    """The decorated method is exempt; its class, a body mentioning the text, and a
+    same-prefix decorator name are not (that one is reached as a registration instead)."""
     source = dedent(
         """
         import abc
         from abc import abstractmethod
+
+        def abstractmethodish(func):
+            return func
 
         class _Holder(abc.ABC):
             @abc.abstractmethod
@@ -895,6 +2192,10 @@ def test_abstractmethod_exemption_reads_only_the_units_own_decorators(tmp_path: 
             def _step(self):
                 return 2
 
+            @abstractmethodish
+            def _lookalike(self):
+                return 3
+
         def _fake():
             return "@abstractmethod"
         """
@@ -902,4 +2203,24 @@ def test_abstractmethod_exemption_reads_only_the_units_own_decorators(tmp_path: 
     units, unused = _referenced_graph(tmp_path, source)
 
     assert _unit(units, "sample._Holder._do").references == set()
+    lookalike = _unit(units, "sample._Holder._lookalike")
+    assert not unused_module._is_abstract(lookalike)
+    assert lookalike.references == {"decorator::abstractmethodish"}
     assert unused == {"_Holder", "_fake"}
+
+
+def test_test_file_exemption_matches_the_default_exclude_shapes(tmp_path: Path) -> None:
+    """The test-file exemption covers ``conftest.py`` and the default exclude shapes, not any ``_test`` substring."""
+    source = "def _dead():\n    return 1\n"
+    expect_reported = {
+        "conftest.py": False,
+        "legacy_testament.py": True,
+        "probe_test.py": False,
+        "probe_tests.py": False,
+        "test_probe.py": False,
+    }
+    for filename, reported in expect_reported.items():
+        units = extract_units(tmp_path, source, filename=filename, include_private=True)
+        build_reference_graph(units)
+        unused = find_potentially_unused(units, strict_unused=True)
+        assert ("_dead" in {unit.name for unit in unused}) is reported, filename
