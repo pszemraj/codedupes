@@ -363,8 +363,9 @@ def test_cli_show_diff_respects_source_lines_budget(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("budget,hunks,omitted", [(3, 1, 6), (5, 1, 4), (6, 2, 3), ("all", 2, 0)])
 def test_cli_show_diff_budgets_body_lines_without_orphan_headers(
-    tmp_path: Path, budget: int | str, hunks: int, omitted: int
+    monkeypatch, tmp_path: Path, budget: int | str, hunks: int, omitted: int
 ) -> None:
+    monkeypatch.chdir(tmp_path)
     middle = "".join(f"    step_{index} = value + {index}\n" for index in range(8))
     for filename, variable in (("file_a.py", "result"), ("file_b.py", "total")):
         (tmp_path / filename).write_text(
