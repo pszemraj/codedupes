@@ -361,6 +361,45 @@ def test_cli_show_diff_respects_source_lines_budget(tmp_path: Path) -> None:
     assert "more diff line" in result.stdout
 
 
+@pytest.mark.parametrize("budget,hunks,omitted", [(3, 1, 6), (5, 1, 4), (6, 2, 3), ("all", 2, 0)])
+def test_cli_show_diff_budgets_body_lines_without_orphan_headers(
+    tmp_path: Path, budget: int | str, hunks: int, omitted: int
+) -> None:
+    middle = "".join(f"    step_{index} = value + {index}\n" for index in range(8))
+    for filename, variable in (("file_a.py", "result"), ("file_b.py", "total")):
+        (tmp_path / filename).write_text(
+            f"def calc(value):\n    {variable} = value\n{middle}    return {variable}\n",
+            encoding="utf-8",
+        )
+
+    result = CliRunner().invoke(
+        cli.cli,
+        [
+            "check",
+            str(tmp_path),
+            "--traditional-only",
+            "--no-unused",
+            "--no-tiny-filter",
+            "--show-diff",
+            "--source-lines",
+            str(budget),
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "--- file_a.py:1" in result.stdout
+    assert "+++ file_b.py:1" in result.stdout
+    assert "-    result = value" in result.stdout
+    assert "+    total = value" in result.stdout
+    assert result.stdout.count("@@") == 2 * hunks
+    if omitted:
+        assert f"({omitted} more diff lines)" in result.stdout
+        assert "+    return total" not in result.stdout
+    else:
+        assert "more diff line" not in result.stdout
+        assert "+    return total" in result.stdout
+
+
 @pytest.mark.parametrize("result_level", ["unit", "file"])
 def test_cli_table_locations_preserve_bracketed_path_segments(monkeypatch, tmp_path, result_level):
     path = tmp_path / "sample.py"

@@ -683,6 +683,27 @@ def _git_work_tree(tmp_path: Path) -> Path:
     return root
 
 
+def _nested_git_checkout(root: Path, *, git_file: bool) -> Path:
+    """Create a nested checkout with either a ``.git`` directory or file."""
+    checkout = root / "vendor"
+    if not git_file:
+        checkout.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=checkout, check=True)
+        return checkout
+
+    subprocess.run(
+        [
+            "git",
+            "init",
+            "-q",
+            f"--separate-git-dir={root.parent / 'vendor-git-dir'}",
+            os.fspath(checkout),
+        ],
+        check=True,
+    )
+    return checkout
+
+
 @requires_git
 def test_extract_all_skips_gitignored_paths_and_logs_a_hint(tmp_path: Path, caplog) -> None:
     root = _git_work_tree(tmp_path)
@@ -731,6 +752,110 @@ def test_gitignore_applies_to_ignored_files_beneath_subdirectory_target(tmp_path
     extractor = CodeExtractor(package)
 
     assert extractor.extract_all() == []
+
+
+@requires_git
+@pytest.mark.parametrize("git_file", [False, True], ids=["git-directory", "git-file"])
+def test_nested_checkout_gitignore_prunes_extraction_and_reference_files(
+    tmp_path: Path, git_file: bool
+) -> None:
+    """Nested checkouts apply their own ignore rules to both walks."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    nested = _nested_git_checkout(root, git_file=git_file)
+    (nested / ".gitignore").write_text("hidden.py\n", encoding="utf-8")
+    _write_source_tree(root, ["outside.py", "vendor/hidden.py", "vendor/kept.py"])
+
+    units = CodeExtractor(root, include_private=True).extract_all()
+    references = CodeExtractor(root).reference_files()
+
+    assert sorted(unit.name for unit in units) == ["kept_fn", "outside_fn"]
+    assert {path.relative_to(root).as_posix() for path in references} == {
+        "outside.py",
+        "vendor/kept.py",
+    }
+
+
+@requires_git
+def test_nested_checkout_gitignore_prunes_the_c_header_policy_scan(tmp_path: Path) -> None:
+    """Ignored C++ in a nested checkout cannot make root headers ambiguous."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    nested = _nested_git_checkout(root, git_file=False)
+    (nested / ".gitignore").write_text("addon.cpp\n", encoding="utf-8")
+    (nested / "addon.cpp").write_text("int addon() { return 2; }\n", encoding="utf-8")
+    (root / "main.c").write_text("int main(void) { return 0; }\n", encoding="utf-8")
+    (root / "util.h").write_text(
+        "static int helper(int value) { return value + 1; }\n", encoding="utf-8"
+    )
+
+    extractor = CodeExtractor(root, include_private=True)
+
+    assert sorted(unit.qualified_name for unit in extractor.extract_all()) == [
+        "main.main",
+        "util.helper",
+    ]
+    assert extractor.diagnostics == []
+
+
+@requires_git
+@pytest.mark.parametrize("git_file", [False, True], ids=["git-directory", "git-file"])
+def test_explicit_nested_checkout_root_is_scanned_when_outer_git_ignores_it(
+    tmp_path: Path, git_file: bool
+) -> None:
+    """Selecting an outer-ignored checkout root remains an explicit request."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    (root / ".gitignore").write_text("vendor/\n", encoding="utf-8")
+    nested = _nested_git_checkout(root, git_file=git_file)
+    (nested / "visible.py").write_text("def visible():\n    return 1\n", encoding="utf-8")
+
+    assert [unit.name for unit in CodeExtractor(nested).extract_all()] == ["visible"]
+
+
+@pytest.mark.parametrize("excluded_by", ["pattern", "gitignore"])
+@requires_git
+def test_outer_exclusion_does_not_query_an_excluded_nested_checkout(
+    tmp_path: Path, excluded_by: str
+) -> None:
+    """A hard or Git exclusion prunes before a nested checkout's Git query."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    if excluded_by == "gitignore":
+        (root / ".gitignore").write_text("vendor/\n", encoding="utf-8")
+    nested = _nested_git_checkout(root, git_file=False)
+    (nested / ".git" / "index").write_bytes(b"not an index")
+    (nested / "hidden.py").write_text("def hidden():\n    return 1\n", encoding="utf-8")
+    (root / "kept.py").write_text("def kept():\n    return 1\n", encoding="utf-8")
+
+    extractor = CodeExtractor(
+        root, exclude_patterns=["vendor/"] if excluded_by == "pattern" else None
+    )
+
+    assert [unit.name for unit in extractor.extract_all()] == ["kept"]
+    assert extractor.diagnostics == []
+
+
+@requires_git
+def test_nested_gitignore_failure_reports_the_nested_checkout(tmp_path: Path) -> None:
+    """A failed nested Git query reports its own checkout as the source."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    nested = _nested_git_checkout(root, git_file=False)
+    (nested / ".git" / "index").write_bytes(b"not an index")
+    (nested / "visible.py").write_text("def visible():\n    return 1\n", encoding="utf-8")
+
+    extractor = CodeExtractor(root)
+
+    assert [unit.name for unit in extractor.extract_all()] == ["visible"]
+    assert [(diagnostic.code, diagnostic.file_path) for diagnostic in extractor.diagnostics] == [
+        ("gitignore-unavailable", nested)
+    ]
 
 
 @requires_git

@@ -41,6 +41,7 @@ class DefinitionReferences:
     children_by_name: dict[str, list[DefinitionReferences]] = field(
         default_factory=dict, repr=False, compare=False
     )
+    local_names: set[str] = field(default_factory=set, repr=False, compare=False)
     global_names: set[str] = field(default_factory=set, repr=False, compare=False)
     nonlocal_names: set[str] = field(default_factory=set, repr=False, compare=False)
     parameter_names: set[str] = field(default_factory=set, repr=False, compare=False)
@@ -49,11 +50,12 @@ class DefinitionReferences:
 
 @dataclass
 class ReferenceUse:
-    """One loaded name, the definition it was loaded in, and whether it was a bare name."""
+    """One loaded name, its definition, and whether a child scope binds it locally."""
 
     name: str
     origin: DefinitionReferences = field(repr=False)
     bare: bool
+    transiently_bound: bool = False
 
 
 @dataclass
@@ -145,6 +147,9 @@ class _ReferenceCollector(ast.NodeVisitor):
         self._scope_imports: list[dict[str, str]] = []
         # Parallel to _scopes: the ClassInfo when that scope is a class body.
         self._class_scopes: list[ClassInfo | None] = []
+        # Lambda and comprehension scopes belong to their enclosing definition
+        # for reporting, but their local names must not reach module definitions.
+        self._transient_bindings: list[set[str]] = []
         self._annotation_depth = 0
 
     def _record(self, name: str, *, bare: bool = False) -> None:
@@ -158,7 +163,10 @@ class _ReferenceCollector(ast.NodeVisitor):
             self.module_references.add(name)
             return
         scope = self._scopes[-1]
-        scope.uses.append(ReferenceUse(name, scope, bare))
+        transiently_bound = bare and any(
+            name in bindings for bindings in reversed(self._transient_bindings)
+        )
+        scope.uses.append(ReferenceUse(name, scope, bare, transiently_bound))
 
     def _visit_annotation(self, node: ast.expr) -> None:
         """Visit an annotation, unquoting string forward references on the way.
@@ -240,6 +248,57 @@ class _ReferenceCollector(ast.NodeVisitor):
         else:
             self.visit(node.value)
 
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        """Visit lambda defaults outside, and its body inside, the lambda's local scope."""
+        self.visit(node.args)
+        self._transient_bindings.append(_lambda_bound_names(node))
+        try:
+            self.visit(node.body)
+        finally:
+            self._transient_bindings.pop()
+
+    def _visit_comprehension(
+        self, generators: list[ast.comprehension], values: tuple[ast.expr, ...]
+    ) -> None:
+        """Visit a comprehension while giving each target its Python scope.
+
+        The first iterable evaluates before any target is bound. Later
+        iterables and filters see the targets before them, as does the result.
+
+        :param generators: ``for`` clauses in source order.
+        :param values: Element, or key and value, evaluated after the clauses.
+        :return: ``None``.
+        """
+        bindings: set[str] = set()
+        self._transient_bindings.append(bindings)
+        try:
+            for generator in generators:
+                self.visit(generator.iter)
+                bindings.update(_target_names(generator.target))
+                self.visit(generator.target)
+                for condition in generator.ifs:
+                    self.visit(condition)
+            for value in values:
+                self.visit(value)
+        finally:
+            self._transient_bindings.pop()
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        """Visit a list comprehension with a local target scope."""
+        self._visit_comprehension(node.generators, (node.elt,))
+
+    def visit_SetComp(self, node: ast.SetComp) -> None:
+        """Visit a set comprehension with a local target scope."""
+        self._visit_comprehension(node.generators, (node.elt,))
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        """Visit a generator expression with a local target scope."""
+        self._visit_comprehension(node.generators, (node.elt,))
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        """Visit a dictionary comprehension with a local target scope."""
+        self._visit_comprehension(node.generators, (node.key, node.value))
+
     def visit_TypeAlias(self, node: ast.AST) -> None:
         """Visit a ``type Alias = ...`` statement with its value unquoted."""
         for type_param in getattr(node, "type_params", ()):
@@ -250,8 +309,9 @@ class _ReferenceCollector(ast.NodeVisitor):
         """Return the import aliases that decide ``name`` in the current lexical scope.
 
         The innermost definition body that imports the leading name decides,
-        as in Python's own lookup: enclosing class bodies are skipped, and the
-        module's imports and aliases apply when no enclosing function imports it.
+        as in Python's own lookup. Another local binding shadows module aliases;
+        enclosing class bodies are skipped, and the module's aliases apply when
+        no enclosing function imports or binds the name.
 
         :param name: Referenced name or dotted attribute path.
         :return: Alias map that determines its leading name.
@@ -265,6 +325,8 @@ class _ReferenceCollector(ast.NodeVisitor):
             if head in self._scope_imports[depth]:
                 aliases = self._scope_imports[depth]
                 break
+            if head in self._scopes[depth].local_names:
+                return {}
         return aliases
 
     def _resolves_to(self, node: ast.expr, targets: frozenset[str]) -> bool:
@@ -381,6 +443,7 @@ class _ReferenceCollector(ast.NodeVisitor):
         self._scopes.append(definition)
         self._class_scopes.append(class_info)
         self._scope_imports.append(_scope_imports(node.body))
+        definition.local_names.update(_scope_bound_names(node.body))
         try:
             for statement in node.body:
                 self.visit(statement)

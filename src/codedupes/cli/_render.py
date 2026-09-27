@@ -449,7 +449,7 @@ def _print_diff_panel(unit_a: CodeUnit, unit_b: CodeUnit, *, source_lines: int |
 
     :param unit_a: First unit; the diff's "from" side.
     :param unit_b: Second unit; the diff's "to" side.
-    :param source_lines: Maximum diff lines to keep, or ``None`` for no bound.
+    :param source_lines: Maximum hunk body lines to keep, excluding headers, or ``None``.
     :return: ``None``.
     """
     diff = list(
@@ -465,9 +465,22 @@ def _print_diff_panel(unit_a: CodeUnit, unit_b: CodeUnit, *, source_lines: int |
     if not diff:
         return
     omitted = 0
-    if source_lines is not None and len(diff) > source_lines:
-        omitted = len(diff) - source_lines
-        diff = diff[:source_lines]
+    if source_lines is not None:
+        kept = diff[:2]  # File headers do not consume the source-line budget.
+        hunk_header = None
+        body_lines = 0
+        for line in diff[2:]:
+            if line.startswith("@@ "):
+                hunk_header = line
+            elif body_lines < source_lines:
+                if hunk_header is not None:
+                    kept.append(hunk_header)
+                    hunk_header = None
+                kept.append(line)
+                body_lines += 1
+            else:
+                omitted += 1
+        diff = kept
     text = "\n".join(diff)
     if omitted:
         text += f"\n... ({_count(omitted, 'more diff line')})"

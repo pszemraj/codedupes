@@ -158,6 +158,11 @@ class CodeExtractor:
         self.root = root.resolve()
         self.respect_gitignore = respect_gitignore
         self._ignored_paths: frozenset[Path] | None = None
+        # Directories whose ``.git`` boundary has already been considered.  A
+        # nested checkout owns its ignore rules, so each boundary needs its own
+        # query; caching every checked directory keeps ordinary source trees
+        # from repeatedly probing their ancestors for ``.git``.
+        self._gitignore_checked_directories: set[Path] = set()
         user_patterns = list(exclude_patterns) if exclude_patterns else []
         # The effective list, defaults first when enabled, as the run record
         # reports it; the default and user matchers below keep the two apart.
@@ -227,14 +232,58 @@ class CodeExtractor:
             return False
         if self._ignored_paths is None:
             self._ignored_paths, failure = git_ignored_paths(self.root)
+            self._gitignore_checked_directories.add(self.root)
             if failure is not None:
-                self._report_gitignore_failure(failure)
+                self._report_gitignore_failure(self.root, failure)
+        rel = path.relative_to(self.root)
+        if self._ignored_paths and (
+            rel in self._ignored_paths
+            or (check_ancestors and any(parent in self._ignored_paths for parent in rel.parents))
+        ):
+            return True
+        self._load_nested_gitignore_paths(path)
         if not self._ignored_paths:
             return False
-        rel = path.relative_to(self.root)
         if rel in self._ignored_paths:
             return True
         return check_ancestors and any(parent in self._ignored_paths for parent in rel.parents)
+
+    def _load_nested_gitignore_paths(self, path: Path) -> None:
+        """Add ignore rules from nested checkouts enclosing ``path``.
+
+        Git does not apply a nested checkout's ignore rules when queried from
+        its containing work tree.  Walk from the candidate directory to the
+        extraction root, querying each nested ``.git`` boundary once and
+        translating its ignored paths to the extraction-root-relative form
+        used by :meth:`_is_gitignored`.
+
+        :param path: Candidate path under the extraction root.
+        :return: ``None``.
+        """
+        ignored_paths = self._ignored_paths
+        if ignored_paths is None or (path.is_symlink() and path.is_dir()):
+            return
+        directory = path if path.is_dir() else path.parent
+        while directory.is_relative_to(self.root):
+            if directory in self._gitignore_checked_directories:
+                # Each newly checked directory walks all the way to the root,
+                # so an existing entry means its remaining ancestors were
+                # already considered too.
+                return
+            self._gitignore_checked_directories.add(directory)
+            if directory != self.root and (directory / ".git").exists():
+                ignored, failure = git_ignored_paths(directory)
+                if failure is not None:
+                    self._report_gitignore_failure(directory, failure)
+                if ignored:
+                    relative_directory = directory.relative_to(self.root)
+                    ignored_paths = ignored_paths.union(
+                        relative_directory / ignored_path for ignored_path in ignored
+                    )
+                    self._ignored_paths = ignored_paths
+            if directory == self.root:
+                return
+            directory = directory.parent
 
     def _should_exclude(
         self,
@@ -265,6 +314,7 @@ class CodeExtractor:
             return True
         if not path.is_symlink():
             return False
+        is_directory_symlink = path.is_dir()
         try:
             resolved = path.resolve()
         except (OSError, RuntimeError):
@@ -273,7 +323,7 @@ class CodeExtractor:
         return resolved.is_relative_to(self.root) and self._matches_exclude(
             resolved,
             match_patterns=match_patterns,
-            match_ignored=match_ignored,
+            match_ignored=match_ignored and not is_directory_symlink,
             matchers=matchers,
         )
 
@@ -303,33 +353,31 @@ class CodeExtractor:
             directory_parts = (rel.name,) if path_is_directory else ()
         if any(self._is_excluded_dir_name(part) for part in directory_parts):
             return True
-        if match_ignored and self._is_gitignored(path, check_ancestors=check_ancestors):
-            return True
-        if not match_patterns:
-            return False
-
-        # Match ancestors too: excluding a directory excludes its whole subtree.
-        candidates = [rel]
-        if check_ancestors:
-            candidates.extend(parent for parent in rel.parents if parent != Path("."))
-        active_matchers = self._exclude_matchers if matchers is None else matchers
-        for candidate in candidates:
-            is_directory = candidate != rel or path_is_directory
-            relative_name = os.path.normcase(candidate.as_posix())
-            basename = os.path.normcase(candidate.name)
-            for use_path, directory_only, matcher, zero_depth in active_matchers:
-                if directory_only and not is_directory:
-                    continue
-                value = relative_name if use_path else basename
-                if matcher.match(value) or (is_directory and matcher.match(value + os.sep)):
-                    return True
-                # ``**/`` also matches zero directory levels.
-                if zero_depth is not None and (
-                    zero_depth.match(relative_name)
-                    or (is_directory and zero_depth.match(relative_name + os.sep))
-                ):
-                    return True
-        return False
+        if match_patterns:
+            # Match ancestors too: excluding a directory excludes its whole subtree.
+            # This runs before Git lookup so a caller's hard exclusion never
+            # launches Git for a checkout that is already out of scope.
+            candidates = [rel]
+            if check_ancestors:
+                candidates.extend(parent for parent in rel.parents if parent != Path("."))
+            active_matchers = self._exclude_matchers if matchers is None else matchers
+            for candidate in candidates:
+                is_directory = candidate != rel or path_is_directory
+                relative_name = os.path.normcase(candidate.as_posix())
+                basename = os.path.normcase(candidate.name)
+                for use_path, directory_only, matcher, zero_depth in active_matchers:
+                    if directory_only and not is_directory:
+                        continue
+                    value = relative_name if use_path else basename
+                    if matcher.match(value) or (is_directory and matcher.match(value + os.sep)):
+                        return True
+                    # ``**/`` also matches zero directory levels.
+                    if zero_depth is not None and (
+                        zero_depth.match(relative_name)
+                        or (is_directory and zero_depth.match(relative_name + os.sep))
+                    ):
+                        return True
+        return match_ignored and self._is_gitignored(path, check_ancestors=check_ancestors)
 
     def _allow_c_headers(self) -> bool:
         """Resolve the repository-level C-header ambiguity policy once.
@@ -517,23 +565,24 @@ class CodeExtractor:
             )
         )
 
-    def _report_gitignore_failure(self, detail: str) -> None:
+    def _report_gitignore_failure(self, directory: Path, detail: str) -> None:
         """Record that git could not list ignored paths inside a checkout.
 
         Nothing is skipped as git-ignored for the run, so the report says why
         paths a working ``git`` would have pruned were scanned.
 
+        :param directory: Checkout directory where Git failed.
         :param detail: First line of git's error output.
         :return: ``None``.
         """
         message = (
-            f"git could not list ignored paths under {self.root} ({detail}); "
+            f"git could not list ignored paths under {directory} ({detail}); "
             "nothing is skipped as git-ignored"
         )
         logger.warning(message)
         self.diagnostics.append(
             ExtractionDiagnostic(
-                file_path=self.root,
+                file_path=directory,
                 language="unknown",
                 message=message,
                 severity="warning",
@@ -587,6 +636,12 @@ class CodeExtractor:
             :param path: File or directory skipped by the current walk.
             :return: Whether active default test globs match the path.
             """
+            # User patterns are hard exclusions, so do not inspect a nested
+            # checkout's Git state merely to categorize an already-pruned path.
+            if self._should_exclude(
+                path, match_ignored=False, matchers=self._user_exclude_matchers
+            ):
+                return False
             if self._should_exclude(path, match_patterns=False):
                 return False
             relative = path.relative_to(self.root).as_posix()
@@ -604,9 +659,7 @@ class CodeExtractor:
             :param path: File or directory skipped by the current walk.
             :return: Whether git ignore rules, not built-in directory names, skipped it.
             """
-            return self._should_exclude(path, match_patterns=False) and not self._should_exclude(
-                path, match_patterns=False, match_ignored=False
-            )
+            return not self._should_exclude(path, match_ignored=False) and self._is_gitignored(path)
 
         for dirpath, dirnames, filenames in os.walk(
             self.root, followlinks=False, onerror=self._report_walk_error
