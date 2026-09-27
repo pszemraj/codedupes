@@ -1403,6 +1403,42 @@ def test_registration_decorators_reach_the_definition_and_wrappers_do_not(tmp_pa
     assert unused == {"dead_cached", "dead_aliased", "dead_context", "dead_static"}
 
 
+def test_wrapper_decorators_resolve_imports_visible_at_the_definition(tmp_path: Path) -> None:
+    """Wrapper imports in compound, enclosing-function, and class scopes do not register code."""
+    source = dedent(
+        """
+        try:
+            from functools import cache as module_cache
+        except ImportError:
+            from functools import cache as module_cache
+
+        @module_cache
+        def _module_cached():
+            return 1
+
+        def _outer():
+            from functools import lru_cache as function_cache
+
+            @function_cache
+            def _nested_cached():
+                return 1
+
+        class _Settings:
+            from functools import cached_property as class_cached_property
+
+            @class_cached_property
+            def _value(self):
+                return 1
+        """
+    ).strip()
+    units, unused = _referenced_graph(tmp_path, source)
+
+    assert _unit(units, "sample._module_cached").references == set()
+    assert _unit(units, "sample._outer._nested_cached").references == set()
+    assert _unit(units, "sample._Settings._value").references == set()
+    assert unused == {"_module_cached", "_outer", "_nested_cached", "_Settings", "_value"}
+
+
 def test_pytest_hooks_are_exempt_outside_conftest(tmp_path: Path) -> None:
     source = "def pytest_addoption(parser):\n    parser.addoption('--x')\n\n\ndef dead():\n    return 1\n"
     _units, unused = _referenced_graph(tmp_path, source)

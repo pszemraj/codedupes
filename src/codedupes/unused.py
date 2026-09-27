@@ -36,7 +36,7 @@ class DefinitionReferences:
     # built any other way still resolves.
     linenos: tuple[int, ...]
     is_class: bool = False
-    decorators: tuple[str, ...] = ()
+    registration_decorator: str | None = None
     parent: DefinitionReferences | None = field(default=None, repr=False, compare=False)
     children_by_name: dict[str, list[DefinitionReferences]] = field(
         default_factory=dict, repr=False, compare=False
@@ -246,21 +246,17 @@ class _ReferenceCollector(ast.NodeVisitor):
             self.visit(type_param)
         self._visit_annotation(node.value)
 
-    def _resolves_to(self, node: ast.expr, targets: frozenset[str]) -> bool:
-        """Return whether a name or dotted attribute resolves through the imports in scope to a target.
+    def _aliases_in_scope(self, name: str) -> dict[str, str]:
+        """Return the import aliases that decide ``name`` in the current lexical scope.
 
         The innermost definition body that imports the leading name decides,
         as in Python's own lookup: enclosing class bodies are skipped, and the
         module's imports and aliases apply when no enclosing function imports it.
 
-        :param node: Callee or annotation expression.
-        :param targets: Fully qualified names to match (``typing.cast``).
-        :return: ``True`` when an alias expansion of the expression is a target.
+        :param name: Referenced name or dotted attribute path.
+        :return: Alias map that determines its leading name.
         """
-        dotted = _dotted_name(node)
-        if dotted is None:
-            return False
-        head = dotted.partition(".")[0]
+        head = name.partition(".")[0]
         aliases = self._aliases
         innermost = len(self._scopes) - 1
         for depth in range(innermost, -1, -1):
@@ -269,7 +265,19 @@ class _ReferenceCollector(ast.NodeVisitor):
             if head in self._scope_imports[depth]:
                 aliases = self._scope_imports[depth]
                 break
-        return bool(_resolve_reference_targets(dotted, aliases) & targets)
+        return aliases
+
+    def _resolves_to(self, node: ast.expr, targets: frozenset[str]) -> bool:
+        """Return whether a name or dotted attribute resolves through the imports in scope to a target.
+
+        :param node: Callee or annotation expression.
+        :param targets: Fully qualified names to match (``typing.cast``).
+        :return: ``True`` when an alias expansion of the expression is a target.
+        """
+        dotted = _dotted_name(node)
+        return dotted is not None and bool(
+            _resolve_reference_targets(dotted, self._aliases_in_scope(dotted)) & targets
+        )
 
     def visit_Call(self, node: ast.Call) -> None:
         """Visit a call, unquoting the type expressions of ``typing.cast`` and ``TypeVar``.
@@ -311,11 +319,20 @@ class _ReferenceCollector(ast.NodeVisitor):
         :return: The registered definition.
         """
         parent = self._scopes[-1] if self._scopes else None
+        decorators = tuple(_base_text(decorator) for decorator in node.decorator_list)
+        registration_decorator = next(
+            (
+                decorator
+                for decorator in decorators
+                if not _is_wrapper_decorator(decorator, self._aliases_in_scope(decorator))
+            ),
+            None,
+        )
         definition = DefinitionReferences(
             name=node.name,
             linenos=_definition_linenos(node),
             is_class=isinstance(node, ast.ClassDef),
-            decorators=tuple(_base_text(decorator) for decorator in node.decorator_list),
+            registration_decorator=registration_decorator,
             parent=parent,
         )
         if parent is not None:
@@ -719,7 +736,7 @@ def _is_wrapper_decorator(decorator: str, aliases: dict[str, str]) -> bool:
     """Return whether a decorator is a standard-library wrapper rather than a possible registration.
 
     :param decorator: Dotted decorator target, call arguments stripped.
-    :param aliases: Module alias map used to expand imported names.
+    :param aliases: Alias map visible where the decorator is evaluated.
     :return: ``True`` for a property accessor or a name resolving to ``_WRAPPER_DECORATORS``.
     """
     if decorator.endswith(_PROPERTY_ACCESSORS):
@@ -946,14 +963,7 @@ def build_reference_graph(
     # (@app.route, @receiver(...), @cli.command()), which no in-project name shows.
     for file_path, module in modules.items():
         for definition in module.definitions:
-            registration = next(
-                (
-                    decorator
-                    for decorator in definition.decorators
-                    if not _is_wrapper_decorator(decorator, module.aliases)
-                ),
-                None,
-            )
+            registration = definition.registration_decorator
             if registration is not None:
                 for unit in units_for(file_path, definition):
                     unit.references.add(f"decorator::{registration}")
