@@ -1315,11 +1315,14 @@ class TreeSitterBackend:
                     ),
                 )
             )
+        # Only scopes that carry a directive can pass one on; testing every
+        # unit against every scope would be quadratic in a file's unit count.
+        directive_scopes = [(scope, kinds) for scope, kinds in scoped_suppressions if kinds]
         suppressions: dict[int, frozenset[str]] = {}
         for spec in deduped.values():
             span = _spec_span(spec)
             suppressions[id(spec)] = frozenset().union(
-                *(kinds for scope, kinds in scoped_suppressions if _span_contains(scope, span))
+                *(kinds for scope, kinds in directive_scopes if _span_contains(scope, span))
             )
 
         units: list[CodeUnit] = []
