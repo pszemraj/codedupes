@@ -1683,34 +1683,28 @@ class PythonBackend(TreeSitterBackend):
         return self.include_private or not (name.startswith("_") and not name.startswith("__"))
 
     def _header_rows(self, anchor: Any, spec: UnitSpec) -> frozenset[int]:
-        """Bound Python header rows to the decorator and def/class line, never the body.
+        """Bound Python header rows to the decorators and signature, never the body.
 
-        The base range includes the body's own first row, which for Python
-        can instead hold a comment tree-sitter attaches to this definition
-        rather than to its ``block`` (the same node that :func:`_leading_comments`
-        finds by hopping to the parent for a nested definition's own leading
-        comment) - so a comment landing after the def line is also treated as
-        the start of the body, not as this unit's own trailing header.
+        The header ends on the row of the ``:`` that closes the signature, so
+        a comment after ``):`` on a multi-row signature is the unit's own. The
+        base range would run to the body's first row instead, and a comment
+        on an own row between the signature and the body is a child of this
+        definition rather than its ``block`` in tree-sitter's tree: it leads
+        the first body statement (:func:`_leading_comments` finds it for a
+        nested definition by hopping to the parent), not this unit.
 
         :param anchor: Statement anchor (the definition or its decorated wrapper).
         :param spec: Unit spec being inspected.
-        :return: Header row numbers, stopping before the body block.
+        :return: Header row numbers, from the first decorator through the ``:`` row.
         """
         start_row = int(getattr(anchor, "start_point", (0, 0))[0])
         def_node = getattr(spec.body, "parent", None)
-        def_row = (
-            int(getattr(def_node, "start_point", (start_row, 0))[0])
-            if def_node is not None
-            else start_row
-        )
-        block_row = int(getattr(spec.body, "start_point", (start_row, 0))[0])
-        for child in _children(anchor):
-            if not _is_comment(child):
-                continue
-            child_row = int(getattr(child, "start_point", (start_row, 0))[0])
-            if child_row > def_row:
-                block_row = min(block_row, child_row)
-        return frozenset(range(start_row, max(def_row, block_row - 1) + 1))
+        colon_rows = [
+            int(getattr(child, "end_point", (start_row, 0))[0])
+            for child in _children(def_node)
+            if getattr(child, "type", "") == ":"
+        ]
+        return frozenset(range(start_row, (colon_rows[0] if colon_rows else start_row) + 1))
 
     def _statement_count(self, body: Any, unit_type: CodeUnitType, source: bytes) -> int:
         """Count executable statements, excluding a docstring, for every unit kind.

@@ -759,8 +759,8 @@ def test_python_directive_attachment(tmp_path: Path) -> None:
 
     # A comment inside a decorator's arguments, a default value, or a type
     # annotation annotates that expression, not the unit, even on a header
-    # row; one trailing a row of a multi-row signature or base list still
-    # belongs to the unit.
+    # row; one trailing a row of a multi-row signature or base list, the
+    # closing ``):`` row included, still belongs to the unit.
     expression_comments = python_units(
         tmp_path,
         """
@@ -784,6 +784,11 @@ def test_python_directive_attachment(tmp_path: Path) -> None:
             a,  # codedupes: ignore[unused]
             b,
         ):
+            return a
+
+        def closed(
+            a,
+        ) -> int:  # codedupes: ignore[unused]
             return a
 
         def conditional(
@@ -810,6 +815,11 @@ def test_python_directive_attachment(tmp_path: Path) -> None:
             Base,  # codedupes: ignore[unused]
         ):
             pass
+
+        class Closed(
+            Base,
+        ):  # codedupes: ignore[unused]
+            pass
         """,
         filename="expression_comments.py",
     )
@@ -817,9 +827,11 @@ def test_python_directive_attachment(tmp_path: Path) -> None:
         "expression_comments.decorated": set(),
         "expression_comments.defaulted": set(),
         "expression_comments.signature": {"unused"},
+        "expression_comments.closed": {"unused"},
         "expression_comments.conditional": set(),
         "expression_comments.annotated": set(),
         "expression_comments.Based": {"unused"},
+        "expression_comments.Closed": {"unused"},
     }
 
     # A UTF-8 BOM before a first-row directive is not code sharing its row.
