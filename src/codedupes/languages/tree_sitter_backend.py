@@ -7,10 +7,12 @@ project pins the official precompiled grammar wheels in ``pyproject``.
 
 from __future__ import annotations
 
+import bisect
 import builtins as builtins_module
 import codecs
 import hashlib
 import importlib
+import itertools
 import keyword
 import re
 import threading
@@ -212,14 +214,30 @@ class UnitSpec:
     is_exported: bool
 
 
-def _span_contains(outer: tuple[int, int], inner: tuple[int, int]) -> bool:
-    """Report whether one byte span encloses another (or equals it).
+def _enclosure_test(spans: Iterable[tuple[int, int]]) -> Callable[[tuple[int, int]], bool]:
+    """Build a test for whether any of a set of byte spans encloses (or equals) a span.
 
-    :param outer: Candidate enclosing ``(start, end)`` byte span.
-    :param inner: Candidate enclosed ``(start, end)`` byte span.
-    :return: ``True`` when ``inner`` lies within ``outer``.
+    Some span encloses ``(start, end)`` exactly when the furthest end among
+    the spans starting at or before ``start`` reaches ``end``, so sorting once
+    answers each query by bisection instead of a scan over every span.
+
+    :param spans: Candidate enclosing ``(start, end)`` byte spans.
+    :return: Predicate over a ``(start, end)`` byte span.
     """
-    return outer[0] <= inner[0] and inner[1] <= outer[1]
+    ordered = sorted(spans)
+    starts = [start for start, _ in ordered]
+    reach = list(itertools.accumulate((end for _, end in ordered), max))
+
+    def encloses(inner: tuple[int, int]) -> bool:
+        """Report whether any span encloses ``inner``.
+
+        :param inner: ``(start, end)`` byte span to test.
+        :return: ``True`` when some span starts at or before it and ends at or after it.
+        """
+        index = bisect.bisect_right(starts, inner[0])
+        return index > 0 and reach[index - 1] >= inner[1]
+
+    return encloses
 
 
 def _spec_span(spec: UnitSpec) -> tuple[int, int]:
@@ -1275,14 +1293,14 @@ class TreeSitterBackend:
         # emitting a private class's methods or a private function's inner
         # definitions would leak internals under a name whose owner was never
         # reported, and nothing outside the container can reach them.
-        private_container_spans = [
+        in_private_container = _enclosure_test(
             _spec_span(spec) for spec in deduped.values() if not self._include_spec(spec)
-        ]
+        )
 
         # A directive applies to its own unit and to every unit nested inside
-        # it (the same containment test as private_container_spans), so each
+        # it (the same span containment as private containers), so each
         # unit's and container block's own suppressions are collected first,
-        # then propagated by span.
+        # then propagated by span, one enclosure test per kind.
         scoped_suppressions: list[tuple[tuple[int, int], frozenset[str]]] = [
             (
                 _spec_span(spec),
@@ -1319,14 +1337,15 @@ class TreeSitterBackend:
                     ),
                 )
             )
-        # Only scopes that carry a directive can pass one on; testing every
-        # unit against every scope would be quadratic in a file's unit count.
-        directive_scopes = [(scope, kinds) for scope, kinds in scoped_suppressions if kinds]
+        in_kind_scope = {
+            kind: _enclosure_test(scope for scope, kinds in scoped_suppressions if kind in kinds)
+            for kind in SUPPRESSION_KINDS
+        }
         suppressions: dict[int, frozenset[str]] = {}
         for spec in deduped.values():
             span = _spec_span(spec)
-            suppressions[id(spec)] = frozenset().union(
-                *(kinds for scope, kinds in directive_scopes if _span_contains(scope, span))
+            suppressions[id(spec)] = frozenset(
+                kind for kind, encloses in in_kind_scope.items() if encloses(span)
             )
 
         units: list[CodeUnit] = []
@@ -1340,7 +1359,7 @@ class TreeSitterBackend:
         ):
             if not self._include_spec(spec):
                 continue
-            if any(_span_contains(span, _spec_span(spec)) for span in private_container_spans):
+            if in_private_container(_spec_span(spec)):
                 continue
             if _contains_error(spec.node):
                 diagnostics.append(

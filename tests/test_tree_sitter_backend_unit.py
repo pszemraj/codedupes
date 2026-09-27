@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from codedupes.languages.tree_sitter_backend import (
     JavaScriptBackend,
     RustBackend,
     TypeScriptBackend,
+    _enclosure_test,
     _same_node,
     _structural_hash,
     _token_hash,
@@ -108,6 +110,18 @@ def test_same_node_uses_source_identity_not_wrapper_identity() -> None:
     assert left is not right
     assert _same_node(left, right)
     assert not _same_node(left, other)
+
+
+def test_enclosure_test_agrees_with_pairwise_containment() -> None:
+    """Every set of up to three spans over a short range, including equal,
+    nested, overlapping, and empty sets, against every query span."""
+    spans = [(start, end) for start in range(5) for end in range(start, 5)]
+    for size in range(4):
+        for candidates in itertools.combinations(spans, size):
+            encloses = _enclosure_test(candidates)
+            for inner in spans:
+                expected = any(start <= inner[0] and inner[1] <= end for start, end in candidates)
+                assert encloses(inner) is expected, (candidates, inner)
 
 
 def test_structural_hash_normalizes_local_names_but_preserves_operators() -> None:
