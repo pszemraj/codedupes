@@ -23,7 +23,7 @@ from codedupes.constants import (
     DEFAULT_TRADITIONAL_THRESHOLD,
     SEMANTIC_DEVICE_CHOICES,
 )
-from codedupes.report.selection import ReportPolicy
+from codedupes.report.selection import ReportPolicy, path_is_within
 from codedupes.semantic import ProgressMode, resolve_search_threshold
 from codedupes.semantic_profiles import (
     THRESHOLD_PROFILE_CHOICES,
@@ -69,11 +69,11 @@ def resolve_focus_paths(focus: tuple[Path, ...], target: Path) -> tuple[Path, ..
     resolved: set[Path] = set()
     for raw in focus:
         candidate = raw.resolve()
-        if not candidate.is_relative_to(root):
+        if not path_is_within(candidate, root):
             # Extraction keeps the in-tree name of a symlink whose target is
             # outside the root, so that name is what its units carry.
             in_tree = raw.absolute().parent.resolve() / raw.name
-            if not (in_tree.is_symlink() and in_tree.is_relative_to(root)):
+            if not (in_tree.is_symlink() and path_is_within(in_tree, root)):
                 raise click.UsageError(f"--focus path {raw} is not inside the scan root {target}.")
             candidate = in_tree
         resolved.add(candidate)

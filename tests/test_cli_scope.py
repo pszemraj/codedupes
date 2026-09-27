@@ -74,6 +74,68 @@ def test_cli_focus_accepts_an_in_tree_symlink_to_an_outside_file(tmp_path: Path)
     }
 
 
+@pytest.mark.parametrize("kind", ["file", "directory", "root"])
+def test_cli_focus_accepts_existing_paths_with_alternate_casing(tmp_path: Path, kind: str) -> None:
+    root = tmp_path / "project"
+    package = root / "package"
+    package.mkdir(parents=True)
+    source = package / "sample.py"
+    body = "def process(value):\n    x = value + 1\n    y = x * 2\n    return y\n"
+    source.write_text(body, encoding="utf-8")
+    (root / "other.py").write_text(body, encoding="utf-8")
+    focus = {"file": source, "directory": package, "root": root}[kind]
+    alternate = focus.with_name(focus.name.upper())
+    if not alternate.exists():
+        pytest.skip("Requires a filesystem that accepts alternate casing of an existing path")
+
+    result = CliRunner().invoke(
+        cli.cli,
+        [
+            "check",
+            str(root),
+            "--traditional-only",
+            "--no-unused",
+            "--json",
+            "--focus",
+            str(alternate),
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.output)
+    assert payload["summary"]["reported_duplicates"] == 1
+    assert payload["summary"]["focus"]["units"] == (2 if kind == "root" else 1)
+    assert payload["summary"]["focus"]["out_of_focus_duplicates"] == 0
+
+
+def test_cli_focus_keeps_distinct_case_sensitive_files_separate(tmp_path: Path) -> None:
+    source = tmp_path / "sample.py"
+    alternate = tmp_path / "SAMPLE.py"
+    source.write_text("def lower():\n    return 1\n", encoding="utf-8")
+    if alternate.exists():
+        pytest.skip("Requires a case-sensitive filesystem")
+    alternate.write_text("def upper():\n    return 2\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        cli.cli,
+        [
+            "check",
+            str(tmp_path),
+            "--unused-only",
+            "--strict-unused",
+            "--json",
+            "--focus",
+            str(source),
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.output)
+    assert payload["summary"]["focus"]["units"] == 1
+    assert payload["summary"]["focus"]["out_of_focus_unused"] == 1
+    assert [unit["name"] for unit in payload["units"].values()] == ["lower"]
+
+
 @pytest.mark.parametrize(("command", "expected_exit_code"), [("check", 1), ("search", 0)])
 @pytest.mark.parametrize("include_tests", [False, True])
 def test_cli_exclude_and_no_default_excludes_are_forwarded_separately(

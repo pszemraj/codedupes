@@ -11,7 +11,7 @@ copy-paste family once.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
@@ -646,15 +646,27 @@ def group_file_results(results: list[tuple[CodeUnit, float]], top_k: int) -> lis
     return sorted(files, key=lambda result: (-result.score, str(result.file_path)))[:top_k]
 
 
-def _in_focus(unit: CodeUnit, paths: tuple[Path, ...]) -> bool:
-    """Return whether a unit's file falls under any focus path.
+def path_is_within(path: Path, parent: Path) -> bool:
+    """Compare path containment using the filesystem when spelling differs.
 
-    :param unit: Unit to test.
-    :param paths: Resolved focus paths (files or directories); a unit under
-        a focus directory or matching a focus file counts as in focus.
-    :return: Whether the unit is in focus.
+    ``resolve()`` follows symlinks but does not canonicalize letter casing on
+    every filesystem. Keep lexical matching for ordinary and unavailable paths;
+    consult file identity for alternate spellings without lowercasing names on
+    case-sensitive filesystems.
+
+    :param path: Resolved file or directory path to test.
+    :param parent: Resolved containing directory or matching file.
+    :return: Whether ``path`` is ``parent`` or lies beneath it.
     """
-    return any(unit.file_path.is_relative_to(path) for path in paths)
+    if path.is_relative_to(parent):
+        return True
+    for candidate in (path, *path.parents):
+        try:
+            if candidate.samefile(parent):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def _finding_count(pairs: Sequence[HybridDuplicate | DuplicatePair]) -> int:
@@ -672,7 +684,7 @@ def _focus_pairs(
     pairs: Sequence[HybridDuplicate] | Sequence[DuplicatePair],
     *,
     kept_families: dict[str, set[int]],
-    paths: tuple[Path, ...],
+    in_focus: Callable[[CodeUnit], bool],
 ) -> list[HybridDuplicate] | list[DuplicatePair]:
     """Filter one duplicate list to the pairs a focused report keeps.
 
@@ -684,7 +696,7 @@ def _focus_pairs(
     :param pairs: Duplicate pairs to filter, raw or hybrid.
     :param kept_families: Uid to the indices of the families with an in-focus
         member that contain it (a unit can sit in two overlapping families).
-    :param paths: Resolved focus paths.
+    :param in_focus: Cached predicate for whether a unit's file is in focus.
     :return: The subset of ``pairs`` a focused report keeps, in input order.
     """
     kept: list[HybridDuplicate] | list[DuplicatePair] = []
@@ -698,7 +710,7 @@ def _focus_pairs(
             )
             if shared:
                 kept.append(pair)  # type: ignore[arg-type]
-        elif _in_focus(pair.unit_a, paths) or _in_focus(pair.unit_b, paths):
+        elif in_focus(pair.unit_a) or in_focus(pair.unit_b):
             kept.append(pair)  # type: ignore[arg-type]
     return kept
 
@@ -719,18 +731,34 @@ def focus_result(result: AnalysisResult, paths: tuple[Path, ...]) -> AnalysisRes
     :param paths: Resolved, deduplicated focus paths (files or directories); must be non-empty.
     :return: A new result scoped to ``paths``, with ``focus`` set.
     """
+    files_in_focus: dict[Path, bool] = {}
+
+    def in_focus(unit: CodeUnit) -> bool:
+        """Check each file once, including filesystem identity lookups.
+
+        :param unit: Unit whose file is being selected.
+        :return: Whether any focus path includes the unit's file.
+        """
+        if unit.file_path not in files_in_focus:
+            files_in_focus[unit.file_path] = any(
+                path_is_within(unit.file_path, path) for path in paths
+            )
+        return files_in_focus[unit.file_path]
+
     kept_families: dict[str, set[int]] = {}
     for index, family in enumerate(build_exact_families(result.all_duplicates)):
-        if any(_in_focus(member, paths) for member in family.members):
+        if any(in_focus(member) for member in family.members):
             for member in family.members:
                 kept_families.setdefault(member.uid, set()).add(index)
 
     traditional = _focus_pairs(
-        result.traditional_duplicates, kept_families=kept_families, paths=paths
+        result.traditional_duplicates, kept_families=kept_families, in_focus=in_focus
     )
-    semantic = _focus_pairs(result.semantic_duplicates, kept_families=kept_families, paths=paths)
-    hybrid = _focus_pairs(result.hybrid_duplicates, kept_families=kept_families, paths=paths)
-    unused = [unit for unit in result.potentially_unused if _in_focus(unit, paths)]
+    semantic = _focus_pairs(
+        result.semantic_duplicates, kept_families=kept_families, in_focus=in_focus
+    )
+    hybrid = _focus_pairs(result.hybrid_duplicates, kept_families=kept_families, in_focus=in_focus)
+    unused = [unit for unit in result.potentially_unused if in_focus(unit)]
 
     focused = replace(
         result,
@@ -743,7 +771,7 @@ def focus_result(result: AnalysisResult, paths: tuple[Path, ...]) -> AnalysisRes
         focused.all_duplicates
     )
     out_of_focus_unused = len(result.potentially_unused) - len(unused)
-    focus_units = sum(1 for unit in result.units if _in_focus(unit, paths))
+    focus_units = sum(1 for unit in result.units if in_focus(unit))
     return replace(
         focused,
         focus=FocusSummary(
