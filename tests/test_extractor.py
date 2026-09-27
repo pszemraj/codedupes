@@ -903,7 +903,7 @@ def test_git_failure_inside_a_checkout_is_a_diagnostic(tmp_path: Path, caplog) -
         units = extractor.extract_all()
     assert "ignored_module_fn" in {unit.name for unit in units}
     assert [diagnostic.code for diagnostic in extractor.diagnostics] == ["gitignore-unavailable"]
-    assert "nothing is skipped as git-ignored" in caplog.text
+    assert "this checkout's ignore rules are unavailable" in caplog.text
 
 
 @requires_git

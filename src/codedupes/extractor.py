@@ -221,8 +221,8 @@ class CodeExtractor:
     def _is_gitignored(self, path: Path, *, check_ancestors: bool = True) -> bool:
         """Return whether git ignores an in-tree path or one of its ancestors.
 
-        The ignored set is read once per extractor, on first use, so a
-        single-file target never runs git.
+        Each checkout's ignored set is read once per extractor, on first
+        encounter, so a single-file target never runs git.
 
         :param path: Candidate path under the extraction root.
         :param check_ancestors: Include parent directories in the lookup.
@@ -568,8 +568,8 @@ class CodeExtractor:
     def _report_gitignore_failure(self, directory: Path, detail: str) -> None:
         """Record that git could not list ignored paths inside a checkout.
 
-        Nothing is skipped as git-ignored for the run, so the report says why
-        paths a working ``git`` would have pruned were scanned.
+        The failed checkout's rules cannot prune paths; rules successfully
+        loaded from other checkouts still apply.
 
         :param directory: Checkout directory where Git failed.
         :param detail: First line of git's error output.
@@ -577,7 +577,7 @@ class CodeExtractor:
         """
         message = (
             f"git could not list ignored paths under {directory} ({detail}); "
-            "nothing is skipped as git-ignored"
+            "this checkout's ignore rules are unavailable"
         )
         logger.warning(message)
         self.diagnostics.append(
