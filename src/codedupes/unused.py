@@ -59,10 +59,10 @@ class ReferenceUse:
 
 @dataclass
 class ClassInfo:
-    """A class definition with its base expressions and public methods."""
+    """A class definition with resolved base targets and public methods."""
 
     definition: DefinitionReferences
-    bases: tuple[str, ...]
+    bases: dict[str, set[str]]
     public_methods: list[DefinitionReferences] = field(default_factory=list)
 
 
@@ -473,7 +473,10 @@ class _ReferenceCollector(ast.NodeVisitor):
         definition = self._enter(node)
         class_info = ClassInfo(
             definition=definition,
-            bases=tuple(_base_text(base) for base in node.bases),
+            bases={
+                base: _resolve_reference_targets(base, self._aliases_in_scope(base))
+                for base in map(_base_text, node.bases)
+            },
         )
         self.classes.append(class_info)
         self._visit_body(node, definition, class_info)
@@ -974,33 +977,30 @@ def _is_wrapper_decorator(decorator: str, aliases: dict[str, str]) -> bool:
 
 
 def _framework_derived_classes(
-    classes: list[tuple[Path, ClassInfo, dict[str, str]]],
+    classes: list[tuple[Path, ClassInfo]],
 ) -> list[tuple[Path, ClassInfo, str]]:
     """Find classes with a base that does not resolve to a project class.
 
-    Each base is expanded through its module's import and assignment aliases,
+    Each base is expanded through the aliases visible where it is evaluated,
     then resolved by name: a last dotted segment is a project class when some
     collected class carries that name, so an external base whose name collides
     with a project class resolves as project. ``object`` never counts.
     Derivation is transitive, so subclasses of a derived class are derived too.
 
-    :param classes: Every collected class with its file and module alias map.
+    :param classes: Every collected class with its file and resolved base targets.
     :return: Each derived class with the base that made it derived.
     """
-    project_names = {class_info.definition.name for _path, class_info, _aliases in classes}
+    project_names = {class_info.definition.name for _path, class_info in classes}
     derived_names: set[str] = set()
     derived_base: dict[int, str] = {}
     changed = True
     while changed:
         changed = False
-        for _path, class_info, aliases in classes:
+        for _path, class_info in classes:
             if id(class_info) in derived_base:
                 continue
-            for base in class_info.bases:
-                tails = {
-                    target.rsplit(".", 1)[-1]
-                    for target in _resolve_reference_targets(base, aliases)
-                }
+            for base, targets in class_info.bases.items():
+                tails = {target.rsplit(".", 1)[-1] for target in targets}
                 external = "object" not in tails and not (tails & project_names)
                 if tails & derived_names or external:
                     derived_base[id(class_info)] = base
@@ -1009,7 +1009,7 @@ def _framework_derived_classes(
                     break
     return [
         (path, class_info, derived_base[id(class_info)])
-        for path, class_info, _aliases in classes
+        for path, class_info in classes
         if id(class_info) in derived_base
     ]
 
@@ -1180,9 +1180,7 @@ def build_reference_graph(
     # Public methods of classes deriving from outside the project are reached
     # by the framework's dispatch (NodeVisitor.visit_*, logging.Filter.filter),
     # which no in-project name can show.
-    all_classes = [
-        (path, cls, module.aliases) for path, module in modules.items() for cls in module.classes
-    ]
+    all_classes = [(path, cls) for path, module in modules.items() for cls in module.classes]
     for file_path, class_info, base in _framework_derived_classes(all_classes):
         for method in class_info.public_methods:
             for unit in units_for(file_path, method):

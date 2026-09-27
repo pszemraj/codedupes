@@ -1357,6 +1357,30 @@ def test_framework_rule_resolves_bases_through_module_aliases(tmp_path: Path) ->
     assert unused == {"_FromAlias", "dead_public", "_Via", "also_dead"}
 
 
+@pytest.mark.parametrize("container", ["def factory():", "class _Container:"])
+def test_framework_rule_resolves_bases_through_enclosing_imports(
+    tmp_path: Path, container: str
+) -> None:
+    """An imported project base stays local to the project inside a function or class."""
+    _root, units, unused = _package_graph(
+        tmp_path,
+        {
+            "mod.py": "class _Props:\n    pass\n",
+            "other.py": (
+                f"{container}\n"
+                "    from .mod import _Props as _Base\n"
+                "    class _Derived(_Base):\n"
+                "        def dead_public(self):\n"
+                "            return 1\n"
+            ),
+        },
+    )
+
+    method = next(unit for unit in units if unit.name == "dead_public")
+    assert method.references == set()
+    assert "dead_public" in unused
+
+
 def test_registration_decorators_reach_the_definition_and_wrappers_do_not(tmp_path: Path) -> None:
     """Any decorator but a standard-library wrapper may register what it decorates."""
     source = dedent(
