@@ -50,12 +50,11 @@ class DefinitionReferences:
 
 @dataclass
 class ReferenceUse:
-    """One loaded name, its definition, and whether a child scope binds it locally."""
+    """One loaded name, the definition it was loaded in, and whether it was bare."""
 
     name: str
     origin: DefinitionReferences = field(repr=False)
     bare: bool
-    transiently_bound: bool = False
 
 
 @dataclass
@@ -159,14 +158,13 @@ class _ReferenceCollector(ast.NodeVisitor):
         :param bare: Whether this was a bare ``Name`` load.
         :return: ``None``.
         """
+        if bare and any(name in bindings for bindings in reversed(self._transient_bindings)):
+            return
         if not self._scopes:
             self.module_references.add(name)
             return
         scope = self._scopes[-1]
-        transiently_bound = bare and any(
-            name in bindings for bindings in reversed(self._transient_bindings)
-        )
-        scope.uses.append(ReferenceUse(name, scope, bare, transiently_bound))
+        scope.uses.append(ReferenceUse(name, scope, bare))
 
     def _visit_annotation(self, node: ast.expr) -> None:
         """Visit an annotation, unquoting string forward references on the way.
@@ -263,18 +261,22 @@ class _ReferenceCollector(ast.NodeVisitor):
         """Visit a comprehension while giving each target its Python scope.
 
         The first iterable evaluates before any target is bound. Later
-        iterables and filters see the targets before them, as does the result.
+        iterables, filters, and the result see every target as local.
 
         :param generators: ``for`` clauses in source order.
         :param values: Element, or key and value, evaluated after the clauses.
         :return: ``None``.
         """
-        bindings: set[str] = set()
+        first, *remaining = generators
+        self.visit(first.iter)
+        bindings = set().union(*(_target_names(generator.target) for generator in generators))
         self._transient_bindings.append(bindings)
         try:
-            for generator in generators:
+            self.visit(first.target)
+            for condition in first.ifs:
+                self.visit(condition)
+            for generator in remaining:
                 self.visit(generator.iter)
-                bindings.update(_target_names(generator.target))
                 self.visit(generator.target)
                 for condition in generator.ifs:
                     self.visit(condition)
@@ -325,7 +327,12 @@ class _ReferenceCollector(ast.NodeVisitor):
             if head in self._scope_imports[depth]:
                 aliases = self._scope_imports[depth]
                 break
-            if head in self._scopes[depth].local_names:
+            if head in self._scopes[depth].global_names:
+                return self._aliases
+            if (
+                head in self._scopes[depth].parameter_names
+                or head in self._scopes[depth].local_names
+            ):
                 return {}
         return aliases
 
@@ -408,18 +415,7 @@ class _ReferenceCollector(ast.NodeVisitor):
             for keyword in node.keywords:
                 self.visit(keyword)
         else:
-            arguments = node.args
-            definition.parameter_names.update(
-                argument.arg
-                for argument in (
-                    *arguments.posonlyargs,
-                    *arguments.args,
-                    *arguments.kwonlyargs,
-                    arguments.vararg,
-                    arguments.kwarg,
-                )
-                if argument is not None
-            )
+            definition.parameter_names.update(_argument_names(node.args))
             self.visit(node.args)
             if node.returns is not None:
                 self._visit_annotation(node.returns)
@@ -547,19 +543,189 @@ def _parse_module(file_path: Path) -> ast.Module | ExtractionDiagnostic:
 
 
 def _import_aliases(node: ast.Import | ast.ImportFrom) -> dict[str, str]:
-    """Map the local names one import statement binds to their full targets.
+    """Map the local names one import statement binds to their targets.
 
     :param node: Import statement.
     :return: Local name to imported dotted target.
     """
     if isinstance(node, ast.Import):
-        return {alias.asname or alias.name.rsplit(".", 1)[-1]: alias.name for alias in node.names}
+        return {
+            alias.asname or alias.name.partition(".")[0]: alias.name
+            if alias.asname
+            else alias.name.partition(".")[0]
+            for alias in node.names
+        }
     base = node.module or ""
     return {
         alias.asname or alias.name: f"{base}.{alias.name}" if base else alias.name
         for alias in node.names
         if alias.name != "*"
     }
+
+
+def _argument_names(arguments: ast.arguments) -> set[str]:
+    """Return every local name bound by a function or lambda signature.
+
+    :param arguments: Parsed function or lambda arguments.
+    :return: Parameter names, including variadic parameters.
+    """
+    return {
+        argument.arg
+        for argument in (
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+            arguments.vararg,
+            arguments.kwarg,
+        )
+        if argument is not None
+    }
+
+
+class _ScopeBindings(ast.NodeVisitor):
+    """Collect names that bind in one lexical scope without entering child code scopes."""
+
+    def __init__(self) -> None:
+        """Start without any bindings or scope declarations."""
+        self.names: set[str] = set()
+        self.global_names: set[str] = set()
+        self.nonlocal_names: set[str] = set()
+
+    def visit_Name(self, node: ast.Name) -> None:
+        """Collect store and delete targets, which make a function name local."""
+        if isinstance(node.ctx, ast.Store | ast.Del):
+            self.names.add(node.id)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        """Collect the local names an import statement binds."""
+        self.names.update(_import_aliases(node))
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        """Collect the local names a from-import statement binds."""
+        self.names.update(_import_aliases(node))
+
+    def visit_Global(self, node: ast.Global) -> None:
+        """Record names this scope delegates to the module."""
+        self.global_names.update(node.names)
+
+    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+        """Record names this scope delegates to an enclosing function."""
+        self.nonlocal_names.update(node.names)
+
+    def _visit_definition_exterior(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+    ) -> None:
+        """Visit expressions evaluated in the containing scope.
+
+        :param node: Nested definition whose body is a separate scope.
+        :return: ``None``.
+        """
+        for decorator in node.decorator_list:
+            self.visit(decorator)
+        if isinstance(node, ast.ClassDef):
+            for base in node.bases:
+                self.visit(base)
+            for keyword in node.keywords:
+                self.visit(keyword.value)
+            return
+        self.visit(node.args)
+        if node.returns is not None:
+            self.visit(node.returns)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        """Collect the nested function's binding but not its body."""
+        self.names.add(node.name)
+        self._visit_definition_exterior(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        """Collect the nested async function's binding but not its body."""
+        self.names.add(node.name)
+        self._visit_definition_exterior(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        """Collect the nested class's binding but not its body."""
+        self.names.add(node.name)
+        self._visit_definition_exterior(node)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        """Visit defaults evaluated in this scope, not the lambda body."""
+        self.visit(node.args)
+
+    def _visit_comprehension(
+        self, generators: list[ast.comprehension], values: tuple[ast.expr, ...]
+    ) -> None:
+        """Visit expressions whose assignment expressions bind in this scope.
+
+        :param generators: ``for`` clauses in source order.
+        :param values: Element, or key and value, evaluated by the comprehension.
+        :return: ``None``.
+        """
+        for generator in generators:
+            self.visit(generator.iter)
+            for condition in generator.ifs:
+                self.visit(condition)
+        for value in values:
+            self.visit(value)
+
+    def visit_ListComp(self, node: ast.ListComp) -> None:
+        """Skip list-comprehension targets, which belong to a child scope."""
+        self._visit_comprehension(node.generators, (node.elt,))
+
+    def visit_SetComp(self, node: ast.SetComp) -> None:
+        """Skip set-comprehension targets, which belong to a child scope."""
+        self._visit_comprehension(node.generators, (node.elt,))
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> None:
+        """Skip generator-expression targets, which belong to a child scope."""
+        self._visit_comprehension(node.generators, (node.elt,))
+
+    def visit_DictComp(self, node: ast.DictComp) -> None:
+        """Skip dictionary-comprehension targets, which belong to a child scope."""
+        self._visit_comprehension(node.generators, (node.key, node.value))
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        """Collect the exception name, which is not represented by ``ast.Name``."""
+        if node.name is not None:
+            self.names.add(node.name)
+        self.generic_visit(node)
+
+
+def _scope_bound_names(body: list[ast.stmt]) -> set[str]:
+    """Return names a function or class body binds in its own lexical scope.
+
+    :param body: Statements in one definition body.
+    :return: Local binding names excluding ``global`` and ``nonlocal`` declarations.
+    """
+    collector = _ScopeBindings()
+    for statement in body:
+        collector.visit(statement)
+    return collector.names - collector.global_names - collector.nonlocal_names
+
+
+def _target_names(node: ast.expr) -> set[str]:
+    """Return names bound by one comprehension target.
+
+    :param node: Target expression in a comprehension clause.
+    :return: Local names bound by the target.
+    """
+    return {
+        child.id
+        for child in ast.walk(node)
+        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store)
+    }
+
+
+def _lambda_bound_names(node: ast.Lambda) -> set[str]:
+    """Return names bound by a lambda's parameters and assignment expressions.
+
+    :param node: Lambda expression.
+    :return: Names local to its body.
+    """
+    collector = _ScopeBindings()
+    collector.visit(node.body)
+    return _argument_names(node.args) | (
+        collector.names - collector.global_names - collector.nonlocal_names
+    )
 
 
 def _scope_imports(body: list[ast.stmt]) -> dict[str, str]:
@@ -962,7 +1128,7 @@ def build_reference_graph(
             if not scope.is_class:
                 if use.name in scope.children_by_name:
                     return class_bound + scope.children_by_name[use.name]
-                if use.name in scope.parameter_names:
+                if use.name in scope.parameter_names or use.name in scope.local_names:
                     return class_bound
             scope = scope.parent
         module_bound = top_level_by_name.get(use.name)

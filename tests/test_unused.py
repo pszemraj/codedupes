@@ -1702,6 +1702,231 @@ def test_parameter_shadows_a_same_named_module_definition(
 @pytest.mark.parametrize(
     "body",
     [
+        pytest.param("    _helper = values[0]\n    return _helper\n", id="assignment"),
+        pytest.param(
+            "    for _helper in values:\n        return _helper\n    return None\n", id="for-target"
+        ),
+        pytest.param("    return [_helper for _helper in values]\n", id="comprehension-target"),
+        pytest.param("    return (lambda _helper: _helper)(values[0])\n", id="lambda-parameter"),
+        pytest.param(
+            "    with open(path) as _helper:\n        return _helper.read()\n", id="with-target"
+        ),
+        pytest.param(
+            "    try:\n        raise ValueError()\n    except ValueError as _helper:\n        return _helper\n",
+            id="except-target",
+        ),
+        pytest.param("    from math import pi as _helper\n    return _helper\n", id="import-alias"),
+        pytest.param(
+            "    first = (_helper := values[0])\n    return _helper + first\n", id="walrus"
+        ),
+    ],
+)
+def test_local_bindings_do_not_credit_a_same_named_module_definition(
+    tmp_path: Path, body: str
+) -> None:
+    """A load of any local binding does not keep a same-named module function alive."""
+    source = f"def _helper():\n    return 1\n\n\ndef caller(values, path):\n{body}"
+    units, unused = _referenced_graph(tmp_path, source)
+
+    helper = _unit(units, "sample._helper")
+    assert helper.references == set()
+    assert "_helper" in unused
+
+
+def test_comprehension_targets_do_not_shadow_the_first_iterable(tmp_path: Path) -> None:
+    """The first iterable still resolves before a comprehension binds its targets."""
+    source = "def _helper():\n    return [1]\n\n\ndef caller():\n    return [_helper for _helper in _helper()]\n"
+    units, unused = _referenced_graph(tmp_path, source)
+
+    helper = _unit(units, "sample._helper")
+    assert helper.references == {_unit(units, "sample.caller").uid}
+    assert "_helper" not in unused
+
+
+def test_comprehension_targets_shadow_later_iterables(tmp_path: Path) -> None:
+    """Every target is local after the first iterable, including before it is assigned."""
+    source = (
+        "def _helper():\n    return [1]\n\n\ndef caller(values):\n"
+        "    return [item for item in values for _helper in _helper()]\n"
+    )
+    units, unused = _referenced_graph(tmp_path, source)
+
+    helper = _unit(units, "sample._helper")
+    assert helper.references == set()
+    assert "_helper" in unused
+
+
+def test_comprehension_targets_do_not_shadow_later_global_loads(tmp_path: Path) -> None:
+    """A comprehension target is local only inside the comprehension itself."""
+    source = (
+        "def _helper():\n    return 1\n\n\ndef caller(values):\n"
+        "    result = [_helper for _helper in values]\n"
+        "    return _helper()\n"
+    )
+    units, unused = _referenced_graph(tmp_path, source)
+
+    helper = _unit(units, "sample._helper")
+    assert helper.references == {_unit(units, "sample.caller").uid}
+    assert "_helper" not in unused
+
+
+def test_comprehension_walrus_binds_the_enclosing_function(tmp_path: Path) -> None:
+    """A comprehension assignment expression binds its containing function, not the child scope."""
+    source = (
+        "def _helper():\n    return 1\n\n\ndef caller(values):\n"
+        "    result = [(_helper := value) for value in values]\n"
+        "    return _helper\n"
+    )
+    units, unused = _referenced_graph(tmp_path, source)
+
+    helper = _unit(units, "sample._helper")
+    assert helper.references == set()
+    assert "_helper" in unused
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param("(lambda _helper: _helper)(1)", id="lambda"),
+        pytest.param("[_helper for _helper in range(1)]", id="comprehension"),
+    ],
+)
+def test_module_child_scope_bindings_do_not_credit_module_definitions(
+    tmp_path: Path, expression: str
+) -> None:
+    """A lambda or comprehension binding is not a module-level reference."""
+    source = f"def _helper():\n    return 1\n\n{expression}\n"
+    units, unused = _referenced_graph(tmp_path, source)
+
+    helper = _unit(units, "sample._helper")
+    assert helper.references == set()
+    assert "_helper" in unused
+
+
+def test_dotted_import_binds_its_package_name(tmp_path: Path) -> None:
+    """``import os.path`` makes ``os`` local, not a same-named module function."""
+    source = (
+        "def os():\n    return 1\n\n\ndef caller():\n"
+        "    import os.path\n"
+        "    return os.path.basename('sample.py')\n"
+    )
+    units, unused = _referenced_graph(tmp_path, source)
+
+    package = _unit(units, "sample.os")
+    assert package.references == set()
+    assert "os" in unused
+
+
+@pytest.mark.parametrize(
+    ("body", "credited"),
+    [
+        pytest.param("        return _helper\n", False, id="closure"),
+        pytest.param("        nonlocal _helper\n        return _helper\n", False, id="nonlocal"),
+        pytest.param("        global _helper\n        return _helper()\n", True, id="global"),
+    ],
+)
+def test_local_bindings_respect_closure_and_global_resolution(
+    tmp_path: Path, body: str, credited: bool
+) -> None:
+    """Closures see enclosing locals, while ``global`` keeps module definitions reachable."""
+    source = (
+        "def _helper():\n    return 1\n\n\ndef outer(value):\n"
+        "    _helper = value\n"
+        "    def inner():\n"
+        f"{body}"
+        "    return inner()\n"
+    )
+    units, unused = _referenced_graph(tmp_path, source)
+
+    helper = _unit(units, "sample._helper")
+    assert bool(helper.references) is credited
+    assert ("_helper" not in unused) is credited
+
+
+def test_local_binding_shadows_a_module_wrapper_import_in_decorator_lookup(tmp_path: Path) -> None:
+    """A local decorator binding is not mistaken for a module-level functools wrapper."""
+    source = dedent(
+        """
+        from functools import cache
+
+        def _register(function):
+            return function
+
+        def outer():
+            cache = _register
+
+            @cache
+            def _decorated():
+                return 1
+        """
+    ).strip()
+    units, _unused = _referenced_graph(tmp_path, source)
+
+    assert _unit(units, "sample.outer._decorated").references == {"decorator::cache"}
+
+
+def test_decorator_alias_lookup_respects_parameters_and_global_declarations(tmp_path: Path) -> None:
+    """A parameter or ``global`` declaration takes precedence over an enclosing wrapper import."""
+    source = dedent(
+        """
+        def cache(function):
+            return function
+
+        def parameter(cache):
+            @cache
+            def _parameter_decorated():
+                return 1
+
+        def outer():
+            from functools import cache
+
+            def inner():
+                global cache
+
+                @cache
+                def _global_decorated():
+                    return 1
+        """
+    ).strip()
+    units, _unused = _referenced_graph(tmp_path, source)
+
+    assert _unit(units, "sample.parameter._parameter_decorated").references == {"decorator::cache"}
+    assert _unit(units, "sample.outer.inner._global_decorated").references == {"decorator::cache"}
+
+
+def test_local_binding_keeps_framework_dispatch_and_global_calls_distinct(tmp_path: Path) -> None:
+    """A method's local does not hide framework credit or an unshadowed helper call."""
+    source = dedent(
+        """
+        import ast
+
+        def node():
+            return 1
+
+        def helper():
+            return 1
+
+        class _Walker(ast.NodeVisitor):
+            def visit_Name(self, ast_node):
+                node = ast_node
+                return node
+
+        def caller():
+            return helper()
+        """
+    ).strip()
+    units, unused = _referenced_graph(tmp_path, source)
+
+    assert _unit(units, "sample.node").references == set()
+    assert _unit(units, "sample._Walker.visit_Name").references == {"framework::ast.NodeVisitor"}
+    assert _unit(units, "sample.helper").references == {_unit(units, "sample.caller").uid}
+    assert "node" in unused
+    assert "helper" not in unused
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
         pytest.param(
             "    if flag:\n        def _helper():\n            return 1\n"
             "    else:\n        def _helper():\n            return 2\n"
