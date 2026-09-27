@@ -807,13 +807,15 @@ def _owns_comment(
     """Decide whether a comment descendant of ``anchor`` belongs to this unit.
 
     Walks upward from the comment's parent toward ``anchor``. Reaching the
-    unit's own ``spec.node``, ``spec.source_node``, or ``anchor`` through
-    header structure alone (parameter lists and parameters, type-parameter
-    lists, class bases, where clauses, the body block) means the comment is
-    the unit's own. Any other node on the way -- a default value, a type
-    annotation, a decorator argument, a nested function, class, or callback
-    -- owns it instead, so a directive there annotates that expression or
-    scope rather than the unit. Unlisted syntax fails toward not attaching.
+    unit's own ``spec.node``, ``spec.source_node``, ``anchor``, or the
+    definition that holds its body (a Python ``def`` or ``class`` inside its
+    ``decorated_definition``) through header structure alone (parameter
+    lists and parameters, type-parameter lists, class bases, where clauses,
+    the body block) means the comment is the unit's own. Any other node on
+    the way -- a default value, a type annotation, a decorator argument, a
+    nested function, class, or callback -- owns it instead, so a directive
+    there annotates that expression or scope rather than the unit. Unlisted
+    syntax fails toward not attaching.
 
     :param comment: Candidate comment, a descendant of ``anchor``.
     :param anchor: Statement anchor from :func:`_statement_anchor`.
@@ -821,12 +823,14 @@ def _owns_comment(
     :param header_node_types: Backend's header-structure node kinds.
     :return: ``True`` when the comment belongs to this unit.
     """
+    definition = getattr(spec.body, "parent", None)
     current = getattr(comment, "parent", None)
     while current is not None:
         if (
             _same_node(current, anchor)
             or _same_node(current, spec.node)
             or _same_node(current, spec.source_node)
+            or _same_node(current, definition)
         ):
             return True
         if getattr(current, "type", "") not in header_node_types:

@@ -638,6 +638,41 @@ def test_python_directive_attachment(tmp_path: Path) -> None:
     )
     assert on_decorator_line["on_decorator_line.f"].suppressions == {"unused", "duplicates"}
 
+    # Below its decorators, a definition's own rows are still its header.
+    decorated_header = python_units(
+        tmp_path,
+        """
+        def _decorate(fn):
+            return fn
+
+        @_decorate
+        def f():  # codedupes: ignore[unused]
+            return 1
+
+        @_decorate
+        def g(
+            a,  # codedupes: ignore[duplicates]
+        ):  # codedupes: ignore[unused]
+            return a
+
+        @_decorate
+        class C(
+            Base,
+        ):  # codedupes: ignore[unused]
+            @property
+            def p(self):  # codedupes: ignore[duplicates]
+                return 1
+        """,
+        filename="decorated_header.py",
+    )
+    assert {name: unit.suppressions for name, unit in decorated_header.items()} == {
+        "decorated_header._decorate": set(),
+        "decorated_header.f": {"unused"},
+        "decorated_header.g": {"unused", "duplicates"},
+        "decorated_header.C": {"unused"},
+        "decorated_header.C.p": {"unused", "duplicates"},
+    }
+
     between_decorators = python_units(
         tmp_path,
         """
